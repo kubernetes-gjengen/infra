@@ -9,7 +9,7 @@ PING_COUNT=5
 
 
 # === 0. Setup portforwarding into K8 cluster ===
-KUBECONFIG=/home/pi/kubeconfig kubectl port-forward pod/apiserver-ffcfcd495-fq9mf 50051:50051 &
+KUBECONFIG=/home/pi/kubeconfig kubectl port-forward pod/apiserver-54c88c4c87-qjj4b 50051:50051 &
 K8_FORWARDING_PID=$!
 sleep 2
 
