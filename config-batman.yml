@@ -9,7 +9,9 @@
 
   tasks:
     - name: Install batman
-      command: "sudo apt-get install batctl --yes"
+      ansible.builtin.apt:
+        name: batctl
+        state: present
     - name: Copy script to remote host
       copy:
         src: "{{ script_name }}"
