@@ -12,7 +12,7 @@ Once the network is running, we want to have access to it via a controller (our 
 
 ### Ansible
 
-Make sure to install ansible on your machine. Next connect all pis to the same network (via ethernet) and make sure they can be reached. Collect heir IP addresses and write them down in an inventory file `pis.ini`. You can now install via the `config-batman.yml` playbook with the command:
+Make sure to install ansible on your machine. Next connect all pis to the same network (via ethernet) and make sure they can be reached. Collect their IP addresses and write them down in an inventory file `pis.ini`. You can now install via the `config-batman.yml` playbook with the command:
 
 ```
 ansible-playbook -i pis.ini config-batman.yml
@@ -31,7 +31,7 @@ This is the [wiki](https://www.open-mesh.org/projects/batman-adv/wiki/Using-batc
 ### Batman service
 
 The batman service is currently NOT installed by the ansible playbook (feel free to improve this). To make it work, copy over the service to `/etc/systemd/system/` and enable it with `sudo systemctl enable batman`
-The service relies on a file called `ip_addr` which contains the desired ip address for the device. IF THIS FILE DOENST EXIST THE SERVICE WILL FAIL. Right now, its not created by the ansible playbook and has to be created manually (feel free to improve this)
+The service relies on a file called `ip_addr` which contains the desired ip address for the device. IF THIS FILE DOESNT EXIST THE SERVICE WILL FAIL. Right now, its not created by the ansible playbook and has to be created manually (feel free to improve this)
 
 ### Bridge
 
