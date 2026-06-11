@@ -28,7 +28,7 @@ sudo batctl if add wlan0
 sudo ifconfig bat0 up
 
 sudo ip addr flush dev bat0
-sudo ip addr add $MESH_IP/24 dev bat0
+sudo ip addr add $MESH_IP/28 dev bat0
 sudo ip link set bat0 up
 
 sudo ip route add default via 192.168.3.241

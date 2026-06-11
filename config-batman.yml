@@ -13,29 +13,50 @@
         name: batctl
         state: present
 
+    - name: copy script
+      copy:
+        src: "{{ script_name}}"
+        dest: "/tmp/{{ script_name }}"
+        mode: "0755"
+
     - name: Execute script with mesh IP argument
       ansible.builtin.shell: >
         nohup
-        {{ script_name }}
+        /tmp/{{ script_name }}
         {{ mesh_ip_prefix }}.{{ base_ip_start + groups['all'].index(inventory_hostname) }}
+      async: 10
+      poll: 0
+      ignore_unreachable: true
       register: script_output
+
+    - name: Wait for connection
+      ansible.builtin.wait_for_connection:
+        delay: 5
+        timeout: 60
 
     - name: Show output
       debug:
         var: script_output.stdout
 
 - name: Run bridge script on manager
-  hosts: manager_group
+  hosts: manager
   become: yes
   vars:
     script_name: bridge.sh
 
   tasks:
+    - name: copy script
+      copy:
+        src: "{{ script_name}}"
+        dest: "/tmp/{{ script_name }}"
+        mode: "0755"
+
     - name: Execute script
-      ansible.builtin.script: "{{ script_name }} > /var/log/bridge_setup.log 2>&1"
+      ansible.builtin.shell: "nohup /tmp/{{ script_name }} > /var/log/bridge_setup.log 2>&1"
       async: 10
       poll: 0
       ignore_unreachable: true
+      register: log_output
 
     - name: Wait for connection
       ansible.builtin.wait_for_connection:
