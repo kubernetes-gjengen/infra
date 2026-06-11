@@ -4,8 +4,8 @@
   become: yes
   vars:
     script_name: config_batman.sh
-    mesh_ip_prefix: "192.168.3"
-    base_ip_start: 241
+    mesh_ip_prefix: "192.168.42"
+    base_ip_start: 1
 
   tasks:
     - name: Install batman
@@ -23,7 +23,7 @@
       ansible.builtin.shell: >
         nohup
         /tmp/{{ script_name }}
-        {{ mesh_ip_prefix }}.{{ base_ip_start + groups['all'].index(inventory_hostname) }}
+        {{ mesh_ip_prefix }}.{{ base_ip_start + groups['all'].index(inventory_hostname) }} {{ mesh_ip_prefix }}.{{ base_ip_start }}
       async: 10
       poll: 0
       ignore_unreachable: true
@@ -45,6 +45,11 @@
     script_name: bridge.sh
 
   tasks:
+    - name: Install iptables
+          ansible.builtin.apt:
+            name: iptables
+            state: present
+
     - name: copy script
       copy:
         src: "{{ script_name}}"
