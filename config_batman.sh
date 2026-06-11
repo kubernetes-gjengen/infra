@@ -7,7 +7,12 @@ else
 	echo "No mesh-ip provided as first argument."
 	exit 1
 fi
-
+if [[ $2 ]]; then
+	DEFAULT_GATEWAY=$2
+else
+	echo "No default gateway provided :'("
+	exit 1
+fi
 # Stop network stuff
 sudo systemctl stop wpa_supplicant
 sudo systemctl stop NetworkManager
@@ -28,9 +33,9 @@ sudo batctl if add wlan0
 sudo ifconfig bat0 up
 
 sudo ip addr flush dev bat0
-sudo ip addr add $MESH_IP/28 dev bat0
+sudo ip addr add $MESH_IP/24 dev bat0
 sudo ip link set bat0 up
 
-sudo ip route add default via 192.168.3.241
+sudo ip route add default via $DEFAULT_GATEWAY
 
 sudo batctl n
