@@ -1,0 +1,82 @@
+---
+- name: Add single host
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    inventory_file: pis.ini
+    network_prefix: "192.168.42"
+
+  tasks:
+    - name: Check if host already exists
+      fail:
+        msg: "Host {{ new_host_ip }} already exists in inventory."
+      when: new_host_ip in groups['all']
+
+    - name: Calculate assigned IP
+      set_fact:
+        assigned_ip: "{{ network_prefix }}.{{ groups['all'] | length + 1 }}"
+
+    - name: Add host to runtime inventory
+      add_host:
+        name: "{{ new_host_ip }}"
+        ansible_host: "{{ new_host_ip }}"
+        ansible_user: pi
+        ansible_password: raspberry
+        assigned_ip: "{{ assigned_ip }}"
+        groups: new_workers
+
+- name: Provision new worker
+  hosts: new_workers
+  gather_facts: true
+  become: yes
+
+  vars:
+    script_name: config_batman.sh
+    network_prefix: "192.168.42"
+    base_ip_start: 1
+
+  tasks:
+    - name: Install batman
+      ansible.builtin.apt:
+        name: batctl
+        state: present
+
+    - name: copy script
+      copy:
+        src: "{{ script_name}}"
+        dest: "/tmp/{{ script_name }}"
+        mode: "0755"
+
+    - name: Execute script with mesh IP argument
+      ansible.builtin.shell: >
+        nohup
+        /tmp/{{ script_name }}
+        {{ assigned_ip }} {{ network_prefix }}.{{ base_ip_start }}
+      async: 10
+      poll: 0
+      ignore_unreachable: true
+      register: script_output
+
+    - name: Wait for connection
+      ansible.builtin.wait_for_connection:
+        delay: 5
+        timeout: 60
+
+    - name: Show output
+      debug:
+        var: script_output.stdout
+
+- name: Persist successful host
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    inventory_file: pis.ini
+
+  tasks:
+    - name: Add worker to inventory
+      lineinfile:
+        path: "{{ inventory_file }}"
+        insertafter: EOF
+        line: "{{ new_host_ip }} ansible_user=pi ansible_password=raspberry assigned_ip={{ hostvars[new_host_ip].assigned_ip }}"
