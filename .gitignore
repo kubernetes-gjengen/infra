@@ -1,2 +1,7 @@
 # We dont need to check in venv
 .venv
+./env/
+./.env
+
+# ansible specific
+./artifacts
