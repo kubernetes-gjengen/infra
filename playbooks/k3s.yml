@@ -1,0 +1,49 @@
+- name: Set hostname
+  hosts: manager_group,worker_group
+  become: true
+  tasks:
+    - name: Set hostname
+      ansible.builtin.hostname:
+        name: "{{ inventory_hostname }}"
+
+- name: Install k3s manager
+  hosts: manager_group
+  tasks:
+    - name: Install k3s
+      become: true
+      shell: curl -sfL https://get.k3s.io | sh -
+    - name: Extract join token from output
+      become: true
+      register: join_token
+      shell: cat /var/lib/rancher/k3s/server/node-token
+      
+- name: Install k3s worker
+  hosts: worker_group
+  tasks:
+    - name: Install k3s
+      become: true
+      shell: curl -sfL https://get.k3s.io | K3S_URL=https://{{ hostvars["manager-0"]["ansible_host"]}}:6443 K3S_TOKEN={{ hostvars["manager-0"]["join_token"].stdout }} sh -
+- name: Copy k3s config
+  hosts: manager-0
+  tasks:
+    - name: Copy k3s config
+      become: true
+      fetch: 
+        src: /etc/rancher/k3s/k3s.yaml 
+        dest: kubeconfig.yml
+        flat: yes
+
+- name: Set up Logs directory
+  hosts: all
+  tasks:
+    - name: Create logs directory
+      become: true
+      file:
+        path: /logs
+        state: directory
+    - name: Chown logs directory
+      become: true
+      shell: chown root /logs
+    - name: Set permissions on logs directory
+      become: true
+      shell: chmod 777 /logs
