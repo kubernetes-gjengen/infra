@@ -1,0 +1,105 @@
+---
+- name: Reset batman configuration on all hosts
+  hosts: all
+  become: yes
+
+  tasks:
+    - name: Remove wlan0 from batman-adv mesh
+      ansible.builtin.command: batctl if del wlan0
+      failed_when: false
+
+    - name: Bring bat0 down
+      ansible.builtin.command: ip link set bat0 down
+      failed_when: false
+
+    - name: Delete bat0 virtual interface
+      ansible.builtin.command: ip link delete bat0
+      failed_when: false
+
+    - name: Unload batman-adv kernel module
+      ansible.builtin.command: modprobe -r batman-adv
+      failed_when: false
+
+    - name: Bring wlan0 down before mode change
+      ansible.builtin.command: ip link set wlan0 down
+      failed_when: false
+
+    - name: Restore wlan0 to managed mode
+      ansible.builtin.command: iwconfig wlan0 mode managed
+      failed_when: false
+
+    - name: Remove batctl package
+      ansible.builtin.apt:
+        name: batctl
+        state: absent
+
+    - name: Remove config script from /tmp
+      ansible.builtin.file:
+        path: /tmp/config_batman.sh
+        state: absent
+
+    - name: Start and enable NetworkManager
+      ansible.builtin.systemd:
+        name: NetworkManager
+        state: started
+        enabled: true
+      failed_when: false
+
+    - name: Start and enable wpa_supplicant
+      ansible.builtin.systemd:
+        name: wpa_supplicant
+        state: started
+        enabled: true
+      failed_when: false
+
+- name: Reset NAT routing on manager
+  hosts: manager
+  become: yes
+
+  tasks:
+    - name: Stop and disable nat-routing service
+      ansible.builtin.systemd:
+        name: nat-routing
+        state: stopped
+        enabled: false
+      failed_when: false
+
+    - name: Remove nat-routing systemd service file
+      ansible.builtin.file:
+        path: /etc/systemd/system/nat-routing.service
+        state: absent
+
+    - name: Remove iptables rules file
+      ansible.builtin.file:
+        path: /etc/iptables/nat-routing.rules
+        state: absent
+
+    - name: Flush iptables NAT rules
+      ansible.builtin.command: iptables -t nat -F
+      failed_when: false
+
+    - name: Flush iptables filter rules
+      ansible.builtin.command: iptables -F
+      failed_when: false
+
+    - name: Reload systemd daemon
+      ansible.builtin.systemd:
+        daemon_reload: true
+
+    - name: Disable IP forwarding
+      ansible.posix.sysctl:
+        name: net.ipv4.ip_forward
+        value: "0"
+        sysctl_set: true
+        state: present
+        reload: true
+
+- name: Reboot all hosts to clear remaining runtime state
+  hosts: all
+  become: yes
+
+  tasks:
+    - name: Reboot
+      ansible.builtin.reboot:
+        reboot_timeout: 120
+        post_reboot_delay: 10

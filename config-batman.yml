@@ -16,7 +16,7 @@
     - name: copy script
       copy:
         src: "{{ script_name}}"
-        dest: "/tmp/{{ script_name }}"
+        dest: "/tmp/{{ script_name }}"
         mode: "0755"
 
     - name: Execute script with mesh IP argument
@@ -24,58 +24,90 @@
         nohup
         /tmp/{{ script_name }}
         {{ mesh_ip_prefix }}.{{ base_ip_start + groups['all'].index(inventory_hostname) }} {{ mesh_ip_prefix }}.{{ base_ip_start }}
+        > /var/log/config_batman.log 2>&1
       async: 10
       poll: 0
       ignore_unreachable: true
-      register: script_output
 
     - name: Wait for connection
       ansible.builtin.wait_for_connection:
         delay: 5
         timeout: 60
 
-    - name: Show output
-      debug:
-        var: script_output.stdout
+    - name: Read script log
+      ansible.builtin.command: cat /var/log/config_batman.log
+      register: script_log
+      changed_when: false
 
-- name: Run bridge script on manager
+    - name: Show script output
+      ansible.builtin.debug:
+        var: script_log.stdout_lines
+
+- name: Configure NAT routing
   hosts: manager
-  become: yes
+  become: true
+
   vars:
-    script_name: bridge.sh
+    wan_interface: eth0
+    bat_interface: bat0
 
   tasks:
     - name: Install iptables
-          ansible.builtin.apt:
-            name: iptables
-            state: present
+      ansible.builtin.apt:
+        name: iptables
+        state: present
 
-    - name: copy script
-      copy:
-        src: "{{ script_name}}"
-        dest: "/tmp/{{ script_name }}"
+    - name: Enable IP forwarding
+      ansible.posix.sysctl:
+        name: net.ipv4.ip_forward
+        value: "1"
+        sysctl_set: true
+        state: present
+        reload: true
+
+    - name: Ensure destination directory exists
+      ansible.builtin.file:
+        path: /etc/iptables
+        state: directory
+        owner: root
+        group: root
         mode: "0755"
 
-    - name: Execute script
-      ansible.builtin.shell: "nohup /tmp/{{ script_name }} > /var/log/bridge_setup.log 2>&1"
-      async: 10
-      poll: 0
-      ignore_unreachable: true
-      register: log_output
+    - name: Deploy iptables rules file
+      ansible.builtin.template:
+        src: templates/nat-routing.rules.j2
+        dest: /etc/iptables/nat-routing.rules
+        owner: root
+        group: root
+        mode: "0640"
+      notify: Restart nat-routing
 
-    - name: Wait for connection
-      ansible.builtin.wait_for_connection:
-        delay: 5
-        timeout: 60
+    - name: Deploy nat-routing systemd service
+      ansible.builtin.copy:
+        src: files/nat-routing.service
+        dest: /etc/systemd/system/nat-routing.service
+        owner: root
+        group: root
+        mode: "0644"
+      notify:
+        - Reload systemd
+        - Restart nat-routing
 
-    - name: Read log file contents # Write to log because connection is lost during ip flush in bridge script
-      ansible.builtin.command: "cat /var/log/bridge_setup.log"
-      register: log_output
+    - name: Enable and start nat-routing service
+      ansible.builtin.systemd:
+        name: nat-routing
+        enabled: true
+        state: started
 
-    - name: Show script output
-      debug:
-        var: log_output.stdout
-# Validage network config BEFORE saving to prevent being locked out
-# Use handler to restart network interface
+    - name: Remove bat0 default gateway
+      ansible.builtin.shell: ip r del default dev bat0
 
-# ADD DEFAULT ROUTE TO BRIDGE SCRIPT
+  handlers:
+    - name: Reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: true
+
+    - name: Restart nat-routing
+      ansible.builtin.systemd:
+        name: nat-routing
+        state: restarted

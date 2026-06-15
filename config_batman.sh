@@ -36,6 +36,6 @@ sudo ip addr flush dev bat0
 sudo ip addr add $MESH_IP/24 dev bat0
 sudo ip link set bat0 up
 
-sudo ip route add default via $DEFAULT_GATEWAY
+sudo ip route add default via $DEFAULT_GATEWAY dev bat0
 
 sudo batctl n
