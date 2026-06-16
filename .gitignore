@@ -5,3 +5,5 @@
 
 # ansible specific
 ./artifacts
+# kinda dynamic now
+./pis.ini
