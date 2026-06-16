@@ -1,7 +1,7 @@
 ---
 - name: Reset batman configuration on all hosts
   hosts: all
-  become: yes
+  become: true
 
   tasks:
     - name: Remove wlan0 from batman-adv mesh

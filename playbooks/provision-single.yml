@@ -23,7 +23,7 @@
 
     - name: Add host to runtime inventory
       add_host:
-        name: "{{ new_host_ip }}"
+        name: "worker{{ groups['all'] | length + 1 }}"
         ansible_host: "{{ new_host_ip }}"
         ansible_user: pi
         ansible_password: raspberry
@@ -36,46 +36,15 @@
   become: true
 
   vars:
-    script_name: ../config_batman.sh
     network_prefix: "192.168.42"
     base_ip_start: 1
 
   tasks:
-    - name: Install batman
-      ansible.builtin.apt:
-        name: batctl
-        state: present
-
-    - name: copy script
-      copy:
-        src: "{{ script_name}}"
-        dest: "/tmp/{{ script_name }}"
-        mode: "0755"
-
-    - name: Execute script with mesh IP argument
-      ansible.builtin.shell: >
-        nohup
-        /tmp/{{ script_name }}
-        {{ assigned_ip }} {{ network_prefix }}.{{ base_ip_start }}
-        > /var/log/config_batman.log 2>&1
-      async: 10
-      poll: 0
-      ignore_unreachable: true
-      register: script_log
-
-    - name: Wait for connection
-      ansible.builtin.wait_for_connection:
-        delay: 5
-        timeout: 60
-
-    - name: Read script log
-      ansible.builtin.command: cat /var/log/config_batman.log
-      register: script_log
-      changed_when: false
-
-    - name: Show script output
-      ansible.builtin.debug:
-        var: script_log.stdout_lines
+    - name: Provision batman on node
+      include_tasks: tasks/provision_batman_node.yml
+      vars:
+        mesh_ip: "{{ assigned_ip }}"
+        gateway_ip: "{{ network_prefix }}.{{ base_ip_start }}"
 
 - name: Persist successful host
   hosts: localhost
