@@ -1,13 +1,14 @@
 - name: Set hostname
-  hosts: manager,worker
+  hosts: all
   become: true
+
   tasks:
     - name: Set hostname
       ansible.builtin.hostname:
         name: "{{ inventory_hostname }}"
 
 - name: Install k3s manager
-  hosts: manager_group
+  hosts: manager
   tasks:
     - name: Install k3s
       become: true
@@ -18,13 +19,13 @@
       shell: cat /var/lib/rancher/k3s/server/node-token
 
 - name: Install k3s worker
-  hosts: worker_group
+  hosts: worker
   tasks:
     - name: Install k3s
       become: true
-      shell: curl -sfL https://get.k3s.io | K3S_URL=https://{{ hostvars["manager-0"]["ansible_host"]}}:6443 K3S_TOKEN={{ hostvars["manager-0"]["join_token"].stdout }} sh -
+      shell: curl -sfL https://get.k3s.io | K3S_URL=https://{{ hostvars["manager"]["ansible_host"]}}:6443 K3S_TOKEN={{ hostvars["manager"]["join_token"].stdout }} sh -
 - name: Copy k3s config
-  hosts: manager-0
+  hosts: manager
   tasks:
     - name: Copy k3s config
       become: true
