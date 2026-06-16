@@ -1,7 +1,7 @@
 ---
 - name: Run non-interactive script on all hosts
   hosts: all
-  become: yes
+  become: true
   vars:
     script_name: config_batman.sh
     mesh_ip_prefix: "192.168.42"

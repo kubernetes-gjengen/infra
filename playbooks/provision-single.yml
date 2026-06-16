@@ -29,7 +29,7 @@
 - name: Provision new worker
   hosts: new_workers
   gather_facts: true
-  become: yes
+  become: true
 
   vars:
     script_name: ../config_batman.sh
