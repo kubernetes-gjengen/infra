@@ -4,7 +4,7 @@
   gather_facts: false
 
   vars:
-    inventory_file: pis.ini
+    inventory_file: ../pis.ini
     network_prefix: "192.168.42"
 
   tasks:
@@ -32,7 +32,7 @@
   become: yes
 
   vars:
-    script_name: config_batman.sh
+    script_name: ../config_batman.sh
     network_prefix: "192.168.42"
     base_ip_start: 1
 
@@ -53,26 +53,32 @@
         nohup
         /tmp/{{ script_name }}
         {{ assigned_ip }} {{ network_prefix }}.{{ base_ip_start }}
+        > /var/log/config_batman.log 2>&1
       async: 10
       poll: 0
       ignore_unreachable: true
-      register: script_output
+      register: script_log
 
     - name: Wait for connection
       ansible.builtin.wait_for_connection:
         delay: 5
         timeout: 60
 
-    - name: Show output
-      debug:
-        var: script_output.stdout
+    - name: Read script log
+      ansible.builtin.command: cat /var/log/config_batman.log
+      register: script_log
+      changed_when: false
+
+    - name: Show script output
+      ansible.builtin.debug:
+        var: script_log.stdout_lines
 
 - name: Persist successful host
   hosts: localhost
   gather_facts: false
 
   vars:
-    inventory_file: pis.ini
+    inventory_file: ../pis.ini
 
   tasks:
     - name: Add worker to inventory
