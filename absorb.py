@@ -4,8 +4,7 @@ import subprocess
 import time
 
 s = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.htons(3))
-s.setsockopt(socket.SOL_SOCKET, socket.SO_BINDTODEVICE, b"enp2s0")
-# s.bind(("enp2s0",0))
+s.setsockopt(socket.SOL_SOCKET, socket.SO_BINDTODEVICE, b"enp2s0") #remember to change interface on other devices
 while True:
     frame, addr = s.recvfrom(2048)
     packet = scapy.all.Ether(frame)    
@@ -27,6 +26,3 @@ while True:
 
     subprocess.run(["ansible-playbook", "playbooks/provision-single.yml", "-e", f"new_host_ip={ip}"], check=True)
     print("Provisioning complete")
-
-            
-
