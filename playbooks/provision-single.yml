@@ -9,8 +9,12 @@
 
   tasks:
     - name: Check if host already exists
-      fail:
+      debug:
         msg: "Host {{ new_host_ip }} already exists in inventory."
+      when: new_host_ip in groups['all']
+
+    - name: End play if host already exists
+      meta: end_play
       when: new_host_ip in groups['all']
 
     - name: Calculate assigned IP

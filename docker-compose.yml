@@ -1,0 +1,10 @@
+services:
+  absorb:
+    build: .
+    network_mode: host
+    cap_add:
+      - NET_RAW
+      - NET_ADMIN
+    volumes:
+      - ./:/app
+      - /app/.venv
