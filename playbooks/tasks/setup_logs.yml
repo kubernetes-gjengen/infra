@@ -1,0 +1,7 @@
+---
+- name: Create /logs directory
+  ansible.builtin.file:
+    path: /logs
+    state: directory
+    owner: root
+    mode: "0777"

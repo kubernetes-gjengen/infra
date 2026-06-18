@@ -1,0 +1,13 @@
+---
+- name: Read join token from manager
+  ansible.builtin.shell: cat /var/lib/rancher/k3s/server/node-token
+  become: true
+  delegate_to: "{{ groups['manager'][0] }}"
+  register: manager_join_token
+
+- name: Install k3s agent
+  ansible.builtin.shell: >-
+    curl -sfL https://get.k3s.io |
+    K3S_URL=https://{{ hostvars[groups['manager'][0]]['ansible_host'] }}:6443
+    K3S_TOKEN={{ manager_join_token.stdout }}
+    sh -

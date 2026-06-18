@@ -1,0 +1,11 @@
+---
+# Expected vars: pi_hostname
+- name: Set hostname via hostnamectl
+  ansible.builtin.hostname:
+    name: "{{ pi_hostname }}"
+
+- name: Update 127.0.1.1 entry in /etc/hosts
+  ansible.builtin.lineinfile:
+    path: /etc/hosts
+    regexp: '^127\.0\.1\.1\s+'
+    line: "127.0.1.1\t{{ pi_hostname }}"

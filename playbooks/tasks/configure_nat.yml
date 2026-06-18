@@ -1,0 +1,52 @@
+---
+# Expected vars: wan_interface, bat_interface
+- name: Install iptables
+  ansible.builtin.apt:
+    name: iptables
+    state: present
+
+- name: Enable IP forwarding
+  ansible.posix.sysctl:
+    name: net.ipv4.ip_forward
+    value: "1"
+    sysctl_set: true
+    state: present
+    reload: true
+
+- name: Ensure /etc/iptables directory exists
+  ansible.builtin.file:
+    path: /etc/iptables
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Deploy iptables rules file
+  ansible.builtin.template:
+    src: "{{ playbook_dir }}/templates/nat-routing.rules.j2"
+    dest: /etc/iptables/nat-routing.rules
+    owner: root
+    group: root
+    mode: "0640"
+
+- name: Deploy nat-routing systemd service
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/files/nat-routing.service"
+    dest: /etc/systemd/system/nat-routing.service
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Reload systemd daemon
+  ansible.builtin.systemd:
+    daemon_reload: true
+
+- name: Enable and start nat-routing service
+  ansible.builtin.systemd:
+    name: nat-routing
+    enabled: true
+    state: started
+
+- name: Remove bat0 default gateway
+  ansible.builtin.shell: ip r del default dev bat0
+  failed_when: false

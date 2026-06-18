@@ -52,3 +52,35 @@
 - name: Show mesh configuration output
   ansible.builtin.debug:
     var: mesh_config_log.stdout_lines
+
+- name: Deploy config_batman.sh
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../shellscripts/config_batman.sh"
+    dest: /usr/local/bin/config_batman.sh
+    mode: "0755"
+
+- name: Deploy batman systemd service
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/batman.service
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Config and start batman
+      After=network.target
+      After=systemd-user-sessions.service
+
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/bin/config_batman.sh {{ mesh_ip }} {{ gateway_ip }}
+
+      [Install]
+      WantedBy=multi-user.target
+
+- name: Reload systemd daemon
+  ansible.builtin.systemd:
+    daemon_reload: true
+
+- name: Enable batman service
+  ansible.builtin.systemd:
+    name: batman
+    enabled: true

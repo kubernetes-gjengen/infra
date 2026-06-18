@@ -1,0 +1,89 @@
+---
+# Usage: ansible-playbook -i inventories/static.ini provision_all.yml
+- name: Set hostname on all nodes
+  hosts: all
+  become: true
+
+  tasks:
+    - name: Compute hostname from group and position
+      ansible.builtin.set_fact:
+        pi_hostname: >-
+          {{
+            (group_names | reject('equalto', 'all') | first) ~
+            groups[(group_names | reject('equalto', 'all') | first)].index(inventory_hostname)
+          }}
+
+    - name: Disable cloud-init
+      ansible.builtin.include_tasks: tasks/disable_cloud_init.yml
+
+    - name: Set hostname
+      ansible.builtin.include_tasks: tasks/set_hostname.yml
+
+- name: Provision batman mesh on all nodes
+  hosts: all
+  become: true
+  vars:
+    mesh_ip_prefix: "192.168.42"
+    base_ip_start: 1
+
+  tasks:
+    - name: Provision batman on node
+      ansible.builtin.include_tasks: tasks/provision_batman_node.yml
+      vars:
+        mesh_ip: "{{ mesh_ip_prefix }}.{{ base_ip_start + groups['all'].index(inventory_hostname) }}"
+        gateway_ip: "{{ mesh_ip_prefix }}.{{ base_ip_start }}"
+
+- name: Configure NAT routing on manager
+  hosts: manager
+  become: true
+  vars:
+    wan_interface: eth0
+    bat_interface: bat0
+
+  tasks:
+    - name: Configure NAT
+      ansible.builtin.include_tasks: tasks/configure_nat.yml
+
+- name: Install k3s server on manager
+  hosts: manager
+  become: true
+
+  tasks:
+    - name: Install k3s server
+      ansible.builtin.include_tasks: tasks/install_k3s_manager.yml
+
+- name: Install k3s agent on workers
+  hosts: worker
+  become: true
+
+  tasks:
+    - name: Install k3s agent
+      ansible.builtin.include_tasks: tasks/install_k3s_worker.yml
+
+- name: Fetch k3s config to controller
+  hosts: manager
+  tasks:
+    - name: Copy k3s config
+      become: true
+      ansible.builtin.fetch:
+        src: /etc/rancher/k3s/k3s.yaml
+        dest: "{{ playbook_dir }}/kubeconfig.yml"
+        flat: yes
+
+- name: Set up logs directory on all nodes
+  hosts: all
+  become: true
+
+  tasks:
+    - name: Set up logs
+      ansible.builtin.include_tasks: tasks/setup_logs.yml
+
+- name: Reboot workers
+  hosts: worker
+  become: true
+
+  tasks:
+    - name: Reboot
+      ansible.builtin.reboot:
+        reboot_timeout: 120
+        post_reboot_delay: 10

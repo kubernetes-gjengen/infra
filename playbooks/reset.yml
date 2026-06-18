@@ -1,4 +1,38 @@
 ---
+- name: Uninstall k3s agent from workers
+  hosts: worker
+  become: true
+
+  tasks:
+    - name: Check if k3s-agent uninstall script exists
+      ansible.builtin.stat:
+        path: /usr/local/bin/k3s-agent-uninstall.sh
+      register: k3s_agent_uninstall
+
+    - name: Run k3s-agent uninstall script
+      ansible.builtin.shell: /usr/local/bin/k3s-agent-uninstall.sh
+      when: k3s_agent_uninstall.stat.exists
+
+- name: Uninstall k3s server from manager
+  hosts: manager
+  become: true
+
+  tasks:
+    - name: Check if k3s uninstall script exists
+      ansible.builtin.stat:
+        path: /usr/local/bin/k3s-uninstall.sh
+      register: k3s_uninstall
+
+    - name: Run k3s uninstall script
+      ansible.builtin.shell: /usr/local/bin/k3s-uninstall.sh
+      when: k3s_uninstall.stat.exists
+
+    - name: Strip cgroup parameters from cmdline.txt
+      ansible.builtin.replace:
+        path: /boot/firmware/cmdline.txt
+        regexp: ' ?(cgroup_enable=cpuset|cgroup_enable=memory|cgroup_memory=1|systemd\.unified_cgroup_hierarchy=1)'
+        replace: ''
+
 - name: Reset batman configuration on all hosts
   hosts: all
   become: true
@@ -93,6 +127,59 @@
         sysctl_set: true
         state: present
         reload: true
+
+- name: Remove remaining artifacts from all hosts
+  hosts: all
+  become: true
+
+  tasks:
+    - name: Stop and disable batman service
+      ansible.builtin.systemd:
+        name: batman
+        state: stopped
+        enabled: false
+      failed_when: false
+
+    - name: Remove batman service file
+      ansible.builtin.file:
+        path: /etc/systemd/system/batman.service
+        state: absent
+
+    - name: Stop and disable network_prober service
+      ansible.builtin.systemd:
+        name: network_prober
+        state: stopped
+        enabled: false
+      failed_when: false
+
+    - name: Remove network_prober service file
+      ansible.builtin.file:
+        path: /etc/systemd/system/network_prober.service
+        state: absent
+
+    - name: Reload systemd daemon
+      ansible.builtin.systemd:
+        daemon_reload: true
+
+    - name: Remove /logs directory
+      ansible.builtin.file:
+        path: /logs
+        state: absent
+
+    - name: Remove /home/pi/ip_addr
+      ansible.builtin.file:
+        path: /home/pi/ip_addr
+        state: absent
+
+- name: Remove fetched kubeconfig from controller
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    - name: Remove kubeconfig.yml
+      ansible.builtin.file:
+        path: "{{ playbook_dir }}/kubeconfig.yml"
+        state: absent
 
 - name: Reboot all hosts to clear remaining runtime state
   hosts: all
