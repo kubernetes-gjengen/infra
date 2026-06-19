@@ -15,7 +15,6 @@ else
 fi
 # Stop network stuff
 sudo systemctl stop wpa_supplicant
-sudo systemctl stop NetworkManager
 sudo rfkill unblock wifi
 sudo ip link set wlan0 down
 
@@ -36,6 +35,7 @@ sudo ip addr flush dev bat0
 sudo ip addr add $MESH_IP/24 dev bat0
 sudo ip link set bat0 up
 
-sudo ip route add default via $DEFAULT_GATEWAY dev bat0
+if [ "$MESH_IP" != "$DEFAULT_GATEWAY" ]; then
+    sudo ip route add default via $DEFAULT_GATEWAY dev bat0
+fi
 
-sudo batctl n

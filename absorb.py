@@ -24,5 +24,5 @@ while True:
 
     print(f"PI detected at MAC:{packet.src}, IP:{ip} . Provisioning...")
 
-    subprocess.run(["ansible-playbook", "playbooks/provision-single.yml", "-e", f"new_host_ip={ip}"], check=True)
+    subprocess.run(["ansible-playbook", "playbooks/provision_single_worker.yml", "-e", f"new_host_ip={ip}"], check=True)
     print("Provisioning complete")

@@ -52,6 +52,33 @@
     - name: Install k3s server
       ansible.builtin.include_tasks: tasks/install_k3s_manager.yml
 
+- name: Configure cgroup parameters on workers
+  hosts: worker
+  become: true
+
+  tasks:
+    - name: Configure cgroups
+      ansible.builtin.include_tasks: tasks/configure_cgroups.yml
+
+- name: Fetch k3s join token from manager
+  hosts: manager
+  become: true
+
+  tasks:
+    - name: Read join token
+      ansible.builtin.shell: cat /var/lib/rancher/k3s/server/node-token
+      register: k3s_join_token
+
+- name: Reboot workers to apply cgroup settings
+  hosts: worker
+  become: true
+
+  tasks:
+    - name: Reboot
+      ansible.builtin.reboot:
+        reboot_timeout: 120
+        post_reboot_delay: 60
+
 - name: Install k3s agent on workers
   hosts: worker
   become: true

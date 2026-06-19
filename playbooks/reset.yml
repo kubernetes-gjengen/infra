@@ -27,7 +27,12 @@
       ansible.builtin.shell: /usr/local/bin/k3s-uninstall.sh
       when: k3s_uninstall.stat.exists
 
-    - name: Strip cgroup parameters from cmdline.txt
+- name: Strip cgroup parameters from cmdline.txt on all nodes
+  hosts: all
+  become: true
+
+  tasks:
+    - name: Strip cgroup parameters
       ansible.builtin.replace:
         path: /boot/firmware/cmdline.txt
         regexp: ' ?(cgroup_enable=cpuset|cgroup_enable=memory|cgroup_memory=1|systemd\.unified_cgroup_hierarchy=1)'
@@ -67,9 +72,14 @@
         name: batctl
         state: absent
 
-    - name: Remove config script from /tmp
+    - name: Remove config script from /usr/local/bin
       ansible.builtin.file:
-        path: /tmp/config_batman.sh
+        path: /usr/local/bin/config_batman.sh
+        state: absent
+
+    - name: Remove NetworkManager unmanaged-devices config
+      ansible.builtin.file:
+        path: /etc/NetworkManager/conf.d/unmanaged-bat0.conf
         state: absent
 
     - name: Start and enable NetworkManager
@@ -85,6 +95,11 @@
         state: started
         enabled: true
       failed_when: false
+
+    - name: Wait for hosts to stabilize after network changes
+      ansible.builtin.wait_for_connection:
+        delay: 5
+        timeout: 60
 
 - name: Reset NAT routing on manager
   hosts: manager

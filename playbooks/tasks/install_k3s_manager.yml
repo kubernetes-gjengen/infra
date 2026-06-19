@@ -1,41 +1,18 @@
 ---
-- name: Read cmdline.txt
-  ansible.builtin.slurp:
-    path: /boot/firmware/cmdline.txt
-  register: cmdline
-
-- name: Build updated cmdline
-  ansible.builtin.set_fact:
-    new_cmdline: >-
-      {{
-        (cmdline.content | b64decode | trim)
-        + ' '
-        + (
-          [
-            'cgroup_enable=cpuset',
-            'cgroup_enable=memory',
-            'cgroup_memory=1',
-            'systemd.unified_cgroup_hierarchy=1'
-          ]
-          | reject('in', cmdline.content | b64decode)
-          | join(' ')
-        )
-      }}
-
-- name: Write updated cmdline.txt
-  ansible.builtin.copy:
-    dest: /boot/firmware/cmdline.txt
-    content: "{{ new_cmdline }}\n"
-    mode: "0644"
-  when: new_cmdline != (cmdline.content | b64decode | trim)
+- name: Configure cgroup parameters
+  ansible.builtin.include_tasks: configure_cgroups.yml
 
 - name: Reboot to apply cgroup settings
   ansible.builtin.reboot:
     reboot_timeout: 120
-    post_reboot_delay: 30
+    post_reboot_delay: 60
 
 - name: Install k3s server
-  ansible.builtin.shell: curl -sfL https://get.k3s.io | sh -
+  ansible.builtin.shell: |
+    set -o pipefail
+    curl -sfL https://get.k3s.io | sh -
+  args:
+    executable: /bin/bash
 
 - name: Wait for node-token to appear
   ansible.builtin.wait_for:

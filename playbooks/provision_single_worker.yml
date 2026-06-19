@@ -51,6 +51,24 @@
         mesh_ip: "{{ assigned_ip }}"
         gateway_ip: "{{ mesh_ip_prefix }}.{{ base_ip_start }}"
 
+- name: Configure cgroup parameters on new worker
+  hosts: new_workers
+  become: true
+
+  tasks:
+    - name: Configure cgroups
+      ansible.builtin.include_tasks: tasks/configure_cgroups.yml
+
+- name: Reboot new worker to apply cgroup settings
+  hosts: new_workers
+  become: true
+
+  tasks:
+    - name: Reboot
+      ansible.builtin.reboot:
+        reboot_timeout: 120
+        post_reboot_delay: 60
+
 - name: Install k3s agent on new worker
   hosts: new_workers
   become: true

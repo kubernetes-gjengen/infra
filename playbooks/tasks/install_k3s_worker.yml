@@ -1,13 +1,39 @@
 ---
-- name: Read join token from manager
+# Token is pre-fetched by a dedicated manager play in provision_all.yml.
+# For --limit single-worker runs where that play is skipped, fall back to delegate_to.
+
+- name: Fetch join token from manager (fallback for --limit runs)
   ansible.builtin.shell: cat /var/lib/rancher/k3s/server/node-token
   become: true
   delegate_to: "{{ groups['manager'][0] }}"
-  register: manager_join_token
+  run_once: true
+  register: _k3s_token_fallback
+  until: _k3s_token_fallback.rc is defined and _k3s_token_fallback.rc == 0
+  retries: 6
+  delay: 10
+  ignore_unreachable: true
+  when: hostvars[groups['manager'][0]]['k3s_join_token'] is not defined
+
+- name: Set join token fact
+  ansible.builtin.set_fact:
+    k3s_join_token: >-
+      {{
+        hostvars[groups['manager'][0]]['k3s_join_token']['stdout']
+        if hostvars[groups['manager'][0]]['k3s_join_token'] is defined
+        else hostvars[ansible_play_hosts[0]]['_k3s_token_fallback']['stdout']
+      }}
+
+- name: Wait for internet connectivity
+  ansible.builtin.command: curl -sf --head https://get.k3s.io
+  register: _connectivity
+  until: _connectivity.rc == 0
+  retries: 12
+  delay: 10
+  changed_when: false
 
 - name: Install k3s agent
-  ansible.builtin.shell: >-
-    curl -sfL https://get.k3s.io |
-    K3S_URL=https://{{ hostvars[groups['manager'][0]]['ansible_host'] }}:6443
-    K3S_TOKEN={{ manager_join_token.stdout }}
-    sh -
+  ansible.builtin.shell: |
+    set -o pipefail
+    curl -sfL https://get.k3s.io | K3S_URL=https://{{ hostvars[groups['manager'][0]]['ansible_host'] }}:6443 K3S_TOKEN={{ k3s_join_token }} sh -
+  args:
+    executable: /bin/bash

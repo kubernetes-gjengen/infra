@@ -1,57 +1,28 @@
 ---
-# Shared by config-batman.yml (bulk, manually-inventoried run) and
-# provision-single.yml (single host added dynamically by absorb.py).
 # Expects: mesh_ip, gateway_ip.
-#
-# Mirrors config_batman.sh natively, without copying/running that script.
-# The wlan0/NetworkManager switch can drop the SSH connection mid-flight,
-# so it runs detached (nohup) and fire-and-forget (async/poll:0); we then
-# wait for the connection to come back instead of waiting on the task.
 
-- name: Install batman
+- name: Install batman dependencies
   ansible.builtin.apt:
-    name: batctl
+    name:
+      - batctl
+      - wireless-tools
     state: present
 
 - name: Load batman-adv kernel module
   ansible.builtin.command: modprobe batman-adv
   changed_when: false
 
-- name: Configure wlan0 ad-hoc mesh and bat0 (disconnects SSH briefly)
-  ansible.builtin.shell: |
-    nohup bash -c '
-    systemctl stop wpa_supplicant
-    systemctl stop NetworkManager
-    rfkill unblock wifi
-    ip link set wlan0 down
-    iwconfig wlan0 mode ad-hoc
-    iwconfig wlan0 essid meshnet
-    iwconfig wlan0 channel 1
-    ip link set wlan0 up
-    batctl if add wlan0
-    ifconfig bat0 up
-    ip addr flush dev bat0
-    ip addr add {{ mesh_ip }}/24 dev bat0
-    ip link set bat0 up
-    ip route add default via {{ gateway_ip }} dev bat0
-    ' > /var/log/config_batman.log 2>&1
-  async: 10
-  poll: 0
-  ignore_unreachable: true
+- name: Prevent NetworkManager from managing wlan0 and bat0
+  ansible.builtin.copy:
+    dest: /etc/NetworkManager/conf.d/unmanaged-bat0.conf
+    mode: "0644"
+    content: |
+      [keyfile]
+      unmanaged-devices=interface-name:bat0;interface-name:wlan0
 
-- name: Wait for connection
-  ansible.builtin.wait_for_connection:
-    delay: 5
-    timeout: 60
-
-- name: Read mesh configuration log
-  ansible.builtin.command: cat /var/log/config_batman.log
-  register: mesh_config_log
+- name: Reload NetworkManager config
+  ansible.builtin.command: nmcli general reload conf
   changed_when: false
-
-- name: Show mesh configuration output
-  ansible.builtin.debug:
-    var: mesh_config_log.stdout_lines
 
 - name: Deploy config_batman.sh
   ansible.builtin.copy:
@@ -80,7 +51,14 @@
   ansible.builtin.systemd:
     daemon_reload: true
 
-- name: Enable batman service
+- name: Enable and start batman service
   ansible.builtin.systemd:
     name: batman
     enabled: true
+    state: started
+
+- name: Enable NetworkManager on boot
+  ansible.builtin.systemd:
+    name: NetworkManager
+    enabled: true
+    state: started
