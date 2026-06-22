@@ -1,0 +1,72 @@
+---
+# Expected vars:
+#   manager_bat_ip
+
+- name: Install jq and bc
+  ansible.builtin.apt:
+    name:
+      - jq
+      - bc
+    state: present
+    update_cache: true
+
+- name: Install grpcurl
+  ansible.builtin.unarchive:
+    src: https://github.com/fullstorydev/grpcurl/releases/download/v1.9.3/grpcurl_1.9.3_linux_arm64.tar.gz
+    dest: /usr/local/bin
+    remote_src: true
+    creates: /usr/local/bin/grpcurl
+
+- name: Copy message.proto
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/files/message.proto"
+    dest: /home/pi/message.proto
+    owner: pi
+    group: pi
+    mode: "0644"
+
+- name: Read manager kubeconfig
+  ansible.builtin.slurp:
+    src: /etc/rancher/k3s/k3s.yaml
+  register: manager_kubeconfig
+  delegate_to: "{{ groups['manager'][0] }}"
+  run_once: true
+
+- name: Deploy kubeconfig
+  ansible.builtin.copy:
+    content: "{{ manager_kubeconfig.content | b64decode }}"
+    dest: /home/pi/kubeconfig
+    owner: pi
+    group: pi
+    mode: "0600"
+
+- name: Replace localhost API endpoint
+  ansible.builtin.replace:
+    path: /home/pi/kubeconfig
+    regexp: 'https://127\.0\.0\.1:6443'
+    replace: 'https://{{ manager_bat_ip }}:6443'
+
+- name: Get wlan0 MAC address
+  ansible.builtin.command: cat /sys/class/net/wlan0/address
+  register: wlan_mac
+  changed_when: false
+
+- name: Store BATMAN MAC
+  ansible.builtin.set_fact:
+    bat_mac: "{{ wlan_mac.stdout | trim }}"
+
+- name: Build bat-hosts content
+  ansible.builtin.set_fact:
+    bat_hosts_content: |
+      {% for host in groups['all'] %}
+      {{ hostvars[host].bat_mac }} {{ host }}
+      {% endfor %}
+  run_once: true
+
+- name: Install /etc/bat-hosts
+  ansible.builtin.copy:
+    dest: /etc/bat-hosts
+    content: "{{ bat_hosts_content }}"
+    owner: root
+    group: root
+    mode: "0644"

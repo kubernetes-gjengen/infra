@@ -105,6 +105,17 @@
     - name: Set up logs
       ansible.builtin.include_tasks: tasks/setup_logs.yml
 
+- name: Configure network prober
+  hosts: manager:worker
+  become: true
+
+  vars:
+    manager_bat_ip: 192.168.42.1
+
+  tasks:
+    - name: Configure network prober
+      ansible.builtin.include_tasks: tasks/configure_network_prober.yml
+
 - name: Reboot workers
   hosts: worker
   become: true
