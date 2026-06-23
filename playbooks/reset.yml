@@ -67,9 +67,11 @@
       ansible.builtin.command: iwconfig wlan0 mode managed
       failed_when: false
 
-    - name: Remove batctl package
+    - name: Remove batctl and wireless-tools packages
       ansible.builtin.apt:
-        name: batctl
+        name:
+          - batctl
+          - wireless-tools
         state: absent
 
     - name: Remove config script from /usr/local/bin
@@ -185,6 +187,22 @@
       ansible.builtin.file:
         path: /home/pi/ip_addr
         state: absent
+
+    - name: Remove grpcurl
+      ansible.builtin.file:
+        path: /usr/local/bin/grpcurl
+        state: absent
+
+    - name: Remove network prober files
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /home/pi/message.proto
+        - /home/pi/network_prober.sh
+        - /home/pi/network_probe_runner.sh
+        - /home/pi/kubeconfig
+        - /etc/bat-hosts
 
 - name: Remove fetched kubeconfig from controller
   hosts: localhost

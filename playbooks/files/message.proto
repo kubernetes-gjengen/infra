@@ -1,0 +1,22 @@
+syntax = "proto3";
+
+package links;
+
+message LinkInfoMessage {
+    string from = 1;
+    string to = 2;
+    int32 latency = 3;
+    double throughput = 4;
+    optional int32 timestamp = 5;
+}
+message LinkInfoMessageList {
+    repeated LinkInfoMessage links = 1;
+}
+
+message EmptyMessage {}
+
+service LinkService {
+    rpc SendData(LinkInfoMessage) returns (EmptyMessage) {}
+    rpc GetAllLinks(EmptyMessage) returns (LinkInfoMessageList) {}
+}
+

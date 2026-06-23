@@ -25,6 +25,14 @@
     group: pi
     mode: "0644"
 
+- name: Copy network prober shellscript
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../shellscripts/network_prober.sh"
+    dest: /home/pi/network_prober.sh
+    owner: pi
+    group: pi
+    mode: "0644"
+
 - name: Read manager kubeconfig
   ansible.builtin.slurp:
     src: /etc/rancher/k3s/k3s.yaml
@@ -44,7 +52,7 @@
   ansible.builtin.replace:
     path: /home/pi/kubeconfig
     regexp: 'https://127\.0\.0\.1:6443'
-    replace: 'https://{{ manager_bat_ip }}:6443'
+    replace: "https://{{ manager_bat_ip }}:6443"
 
 - name: Get wlan0 MAC address
   ansible.builtin.command: cat /sys/class/net/wlan0/address
@@ -55,11 +63,31 @@
   ansible.builtin.set_fact:
     bat_mac: "{{ wlan_mac.stdout | trim }}"
 
+- name: Remove stale bat_mac from inventory line
+  ansible.builtin.replace:
+    path: "{{ inventory_file }}"
+    regexp: '(?m)(^{{ inventory_hostname }}\b[^\n]*?)\s+bat_mac=\S+'
+    replace: '\1'
+  delegate_to: localhost
+  become: false
+  throttle: 1
+
+- name: Write bat_mac to inventory
+  ansible.builtin.replace:
+    path: "{{ inventory_file }}"
+    regexp: '(?m)(^{{ inventory_hostname }}\b[^\n]*)$'
+    replace: '\1 bat_mac={{ wlan_mac.stdout | trim }}'
+  delegate_to: localhost
+  become: false
+  throttle: 1
+
 - name: Build bat-hosts content
   ansible.builtin.set_fact:
     bat_hosts_content: |
       {% for host in groups['all'] %}
+      {% if hostvars[host].bat_mac is defined %}
       {{ hostvars[host].bat_mac }} {{ host }}
+      {% endif %}
       {% endfor %}
   run_once: true
 
