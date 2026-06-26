@@ -1,3 +1,9 @@
+#!/usr/bin/env -S uv run --script
+#
+# /// script
+# requires-python = ">=3.12"
+# dependencies = ["scapy"]
+# ///
 import socket
 import scapy.all
 import subprocess
@@ -24,5 +30,11 @@ while True:
 
     print(f"PI detected at MAC:{packet.src}, IP:{ip} . Provisioning...")
 
-    subprocess.run(["ansible-playbook", "playbooks/provision_single_worker.yml", "-e", f"new_host_ip={ip}"], check=True)
+    try:
+        subprocess.run(["ansible-playbook", "playbooks/provision-single.yml", "-e", f"new_host_ip={ip}"], check=True)
+    except subprocess.CalledProcessError as e:
+        print("Provision failed:")
+        print(e.stdout)
+        print(e.stderr)
+        
     print("Provisioning complete")
