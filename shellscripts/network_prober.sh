@@ -1,128 +1,119 @@
 #!/usr/bin/env bash
+set -uo pipefail
 
-# === Configuration ===
-GRPC_HOST="127.0.0.1:50051"
-PROTO_FILE="message.proto"
-PROTO_IMPORT_PATH=/home/pi
-MEASUREMENT_JSN="/home/pi/links.json"
-PING_COUNT=5
+# ---- Config (overridable via env / systemd Environment=) ----
+GRPC_HOST="${GRPC_HOST:-192.168.42.1}"
+GRPC_PORT="${GRPC_PORT:-30042}"
+PROTO_FILE="${PROTO_FILE:-/home/pi/message.proto}"
+NODE_ID="${NODE_ID:-$(hostname)}"
+BAT_IFACE="${BAT_IFACE:-bat0}"
+LATENCY_INTERVAL="${LATENCY_INTERVAL:-5}" # seconds between latency cycles
+THROUGHPUT_EVERY="${THROUGHPUT_EVERY:-6}" # throughput every Nth cycle (6*5s = 30s)
+PING_COUNT="${PING_COUNT:-3}"
+IPERF_PORT="${IPERF_PORT:-5201}"
+IPERF_DURATION="${IPERF_DURATION:-3}"
 
-# === 0. Setup portforwarding into K8 cluster ===
-KUBECONFIG=/home/pi/kubeconfig kubectl port-forward service/apiserver 50051:50051 &
-K8_FORWARDING_PID=$!
-sleep 2
+cycle=0
+declare -A last_throughput
+declare -A last_latency
+LATENCY_CACHE="/tmp/network_prober_latency"
+mkdir -p "$LATENCY_CACHE"
 
-# === 1. Query existing link data via grpcurl ===
-echo "Querying existing link data..."
-grpcurl -plaintext -d '{}' -import-path "$PROTO_IMPORT_PATH" -proto "$PROTO_FILE" "$GRPC_HOST" links.LinkService/GetAllLinks | tee "$MEASUREMENT_JSN"
+# ---- Helpers ----
 
-# === 2. Get hostname and test links to neighbours ===
-HOST=$(hostname)
-echo "Current host: $HOST"
-
-# Get neighbours from batman-adv
-echo "Getting neighbours via batctl..."
-neighbours=$(batctl n | awk 'NR>2 {print $2}' | sort -u)
-
-# Function to resolve neighbour to a reachable target
-resolve_target() {
-	local neigh=$1
-	sudo batctl t "$neigh" 2>/dev/null | awk 'NR==1 {print $1}'
+get_neighbors() {
+	# batctl resolves MACs to names via /etc/bat-hosts; extract best-path (*) entries
+	batctl -m "$BAT_IFACE" o 2>/dev/null | awk '$1 == "*" {print $2}'
 }
 
-# Function to measure throughput for a neighbour
-# Always returns Mbps (float)
-measure_throughput() {
-	local neigh=$1
+neighbor_to_ip() {
+	getent hosts "$1" 2>/dev/null | awk '{print $1; exit}'
+}
 
-	local result value unit
+send_grpc() {
+	if ! grpcurl -plaintext \
+		-import-path "$(dirname "$PROTO_FILE")" \
+		-proto "$(basename "$PROTO_FILE")" \
+		-d "$1" \
+		"${GRPC_HOST}:${GRPC_PORT}" \
+		links.LinkService/SendData >/dev/null 2>&1; then
+		echo "$(date -Iseconds) WARN: grpcurl failed" >&2
+	fi
+}
 
-	result=""
-	until [[ -n "$result" ]]; do
-		result=$(sudo batctl tp "$neigh" -t 500 2>/dev/null)
-		[[ -z "$result" ]] && sleep 3
+probe_latency() {
+	local neighbor="$1" out avg_ms
+	out="$(timeout 10 batctl -m "$BAT_IFACE" ping -c "$PING_COUNT" "$neighbor" 2>/dev/null)"
+	[ -z "$out" ] && {
+		echo "$(date -Iseconds) WARN: no ping from $neighbor" >&2
+		return
+	}
+
+	avg_ms="$(echo "$out" | grep -oE 'time=[0-9.]+' | cut -d= -f2 |
+		awk '{s+=$1; n++} END{if (n) printf "%.0f", s/n}')"
+
+	if [ -z "$avg_ms" ]; then
+		echo "$(date -Iseconds) WARN: could not parse latency from $neighbor" >&2
+		return
+	fi
+	[ "$avg_ms" -eq 0 ] && avg_ms=1
+
+	echo "$avg_ms" > "$LATENCY_CACHE/$neighbor"
+	local tp="${last_throughput[$neighbor]:-0}"
+	send_grpc "{\"from\":\"$NODE_ID\",\"to\":\"$neighbor\",\"latency\":$avg_ms,\"throughput\":$tp,\"timestamp\":$(date +%s)}"
+}
+
+probe_throughput() {
+	local neighbor="$1" ip="$2" out bps
+	out="$(iperf3 -c "$ip" -p "$IPERF_PORT" -t "$IPERF_DURATION" -J 2>/dev/null)"
+	[ -z "$out" ] && {
+		echo "$(date -Iseconds) WARN: iperf3 failed to $ip ($neighbor)" >&2
+		return
+	}
+
+	local mbps
+	mbps="$(echo "$out" | jq -r '(.end.sum_sent.bits_per_second // .end.sum.bits_per_second // 0) / 1000000')"
+	last_throughput[$neighbor]="${mbps:-0}"
+
+	local lat="${last_latency[$neighbor]:-0}"
+	send_grpc "{\"from\":\"$NODE_ID\",\"to\":\"$neighbor\",\"latency\":$lat,\"throughput\":${mbps:-0},\"timestamp\":$(date +%s)}"
+}
+
+# ---- Main loop ----
+
+echo "$(date -Iseconds) INFO: starting on $NODE_ID (${GRPC_HOST}:${GRPC_PORT})"
+
+while true; do
+	cycle=$((cycle + 1))
+	mapfile -t neighbors < <(get_neighbors)
+
+	[ "${#neighbors[@]}" -eq 0 ] &&
+		echo "$(date -Iseconds) WARN: no neighbors found" >&2
+
+	for neighbor in "${neighbors[@]}"; do
+		[ -z "$neighbor" ] && continue
+		probe_latency "$neighbor" &
+	done
+	wait
+
+	for neighbor in "${neighbors[@]}"; do
+		[ -f "$LATENCY_CACHE/$neighbor" ] \
+			&& last_latency[$neighbor]=$(< "$LATENCY_CACHE/$neighbor")
 	done
 
-	# Example lines handled:
-	# Throughput: 2.87 MB/s (24.09 Mbps)
-	# Throughput: 850 kbit/s
-	# Throughput: 1.97 Mbit/s
-
-	# Prefer Mbps if present in parentheses
-	if echo "$result" | grep -q "Mbps"; then
-		value=$(echo "$result" | sed -n 's/.*(\([0-9.]*\) Mbps).*/\1/p')
-		echo "${value:-0}"
-		return
-	elif echo "$result" | grep -q "Kbps"; then
-		value=$(echo "$result" | sed -n 's/.*(\([0-9.]*\) Kbps).*/\1/p')
-		value=$(echo "scale=4; $value / 1000" | bc)
-		echo "${value:-0}"
-		return
+	if ((cycle % THROUGHPUT_EVERY == 0)); then
+		sleep $((RANDOM % 15))
+		for neighbor in "${neighbors[@]}"; do
+			[ -z "$neighbor" ] && continue
+			local_ip="$(neighbor_to_ip "$neighbor")"
+			[ -z "$local_ip" ] &&
+				{
+					echo "$(date -Iseconds) WARN: no IP for $neighbor, skipping throughput" >&2
+					continue
+				}
+			probe_throughput "$neighbor" "$local_ip"
+		done
 	fi
-	echo 0
-}
 
-measure_latency() {
-	local target=$1
-
-	if [[ -z "$target" ]]; then
-		echo "0"
-		return
-	fi
-	sudo batctl meshif bat0 p "$target" -c "$PING_COUNT" 2>/dev/null |
-		tail -1 |
-		awk -F'/' '{print $5}' |
-		awk '{printf "%.0f", $1}'
-}
-
-# === 3. Calculate average (placeholder function) ===
-average() {
-	local a=$1
-	local b=$2
-	echo "scale=2; ($a + $b) / 2" | bc
-}
-
-# === Process each neighbour ===
-for neigh in $neighbours; do
-	echo "Processing neighbour: $neigh"
-
-	target=$(resolve_target "$neigh")
-
-	# === Existing data ===
-	existing_thr=$(jq -r --arg FROM "$HOST" --arg TO "$neigh" '.links[] | select(.from==$FROM and .to==$TO) | .throughput' "$MEASUREMENT_JSN")
-	existing_lat=$(jq -r --arg FROM "$HOST" --arg TO "$neigh" '.links[] | select(.from==$FROM and .to==$TO) | .latency' "$MEASUREMENT_JSN")
-
-	existing_thr=${existing_thr:-0}
-	existing_lat=${existing_lat:-0}
-
-	# === Measurements ===
-	measured_thr=$(measure_throughput "$target")
-	echo "measured thr $measured_thr"
-	measured_thr=${measured_thr:-0}
-
-	measured_lat=$(measure_latency "$target")
-	measured_lat=${measured_lat:-0}
-
-	# === Updated values (rounded to int) ===
-	updated_thr=$(printf $(average "$existing_thr" "$measured_thr"))
-	updated_lat=$(printf "%.0f" $(average "$existing_lat" "$measured_lat"))
-
-	echo "Existing throughput: $existing_thr"
-	echo "Measured throughput: $measured_thr"
-	echo "Updated throughput: $updated_thr"
-
-	echo "Existing latency: $existing_lat"
-	echo "Measured latency: $measured_lat"
-	echo "Updated latency: $updated_lat"
-	# === 4. Save back updated data ===
-	echo "Sending updated data via grpcurl..."
-	grpcurl -plaintext \
-		-d "{\"from\": \"$HOST\", \"to\": \"$neigh\", \"latency\": $measured_lat, \"throughput\": $updated_thr}" \
-		-import-path "$PROTO_IMPORT_PATH" \
-		-proto "$PROTO_FILE" \
-		"$GRPC_HOST" links.LinkService/SendData
-
+	sleep "$LATENCY_INTERVAL"
 done
-
-kill $K8_FORWARDING_PID
-echo "Done."

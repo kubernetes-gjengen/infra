@@ -1,0 +1,109 @@
+---
+# ConfigMap holds the Mosquitto broker configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mosquitto-config
+data:
+  mosquitto.conf: |
+    listener 1883
+    listener 9001
+    protocol websockets
+    allow_anonymous true
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mosquitto
+  labels:
+    app: mosquitto
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mosquitto
+  template:
+    metadata:
+      labels:
+        app: mosquitto
+    spec:
+      schedulerName: custom-scheduler
+      containers:
+        - name: mosquitto
+          image: eclipse-mosquitto:2
+          ports:
+            - containerPort: 1883
+            - containerPort: 9001
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "32Mi"
+          volumeMounts:
+            - name: config
+              mountPath: /mosquitto/config/mosquitto.conf
+              subPath: mosquitto.conf
+      volumes:
+        - name: config
+          configMap:
+            name: mosquitto-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mosquitto
+spec:
+  selector:
+    app: mosquitto
+  ports:
+    - name: mqtt
+      port: 1883
+      targetPort: 1883
+    - name: websocket
+      port: 9001
+      targetPort: 9001
+      nodePort: 30901
+  type: NodePort
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sensehat-frontend
+  labels:
+    app: sensehat-frontend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: sensehat-frontend
+  template:
+    metadata:
+      labels:
+        app: sensehat-frontend
+    spec:
+      schedulerName: custom-scheduler
+      containers:
+        - name: frontend
+          image: sondrejk/sensehat-frontend:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 80
+          env:
+            - name: NetworkComRequirements
+              value: '[{"Target": "mosquitto", "Latency": 50, "Throughput": 0.1}]'
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "32Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sensehat-frontend
+spec:
+  selector:
+    app: sensehat-frontend
+  ports:
+    - port: 80
+      targetPort: 80
+      nodePort: 30080
+  type: NodePort

@@ -40,3 +40,12 @@ Time to access the network. Connect one of the pis via ethernet to the same netw
 ### Next steps
 
 Test the network. Make sure you can reach all pis from the your laptop and that the pis can reach the internet. Next, you can install a Kubernetes cluster.
+
+### Run Api server:
+
+cd into master thesis repo
+
+copy the kubeconfig from manager
+`scp pi@192.168.3.19:/home/pi/kubeconfig ./kubeconfig.yaml`
+
+`kubectl --kubeconfig kubeconfig.yaml apply -f k8_deployment/deployments/api_server.yml`
