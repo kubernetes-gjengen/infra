@@ -41,7 +41,7 @@ send_grpc() {
 	fi
 }
 send_json() {
-	mosquitto_pub -h 127.0.0.1:31883 -t network/linkdata -m $1
+	mosquitto_pub -h "127.0.0.1" -p 31883 -t network/linkdata -m $1
 }
 
 probe_latency() {
