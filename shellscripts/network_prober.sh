@@ -40,6 +40,9 @@ send_grpc() {
 		echo "$(date -Iseconds) WARN: grpcurl failed" >&2
 	fi
 }
+send_json() {
+	mosquitto_pub -h 127.0.0.1:31883 -t network/linkdata -m $1
+}
 
 probe_latency() {
 	local neighbor="$1" out avg_ms
@@ -60,7 +63,8 @@ probe_latency() {
 
 	echo "$avg_ms" > "$LATENCY_CACHE/$neighbor"
 	local tp="${last_throughput[$neighbor]:-0}"
-	send_grpc "{\"from\":\"$NODE_ID\",\"to\":\"$neighbor\",\"latency\":$avg_ms,\"throughput\":$tp,\"timestamp\":$(date +%s)}"
+	# send_grpc "{\"from\":\"$NODE_ID\",\"to\":\"$neighbor\",\"latency\":$avg_ms,\"throughput\":$tp,\"timestamp\":$(date +%s)}"
+	send_json "{\"from\":\"$NODE_ID\",\"to\":\"$neighbor\",\"latency\":$avg_ms,\"throughput\":$tp,\"timestamp\":$(date +%s)}"
 }
 
 probe_throughput() {
@@ -76,7 +80,8 @@ probe_throughput() {
 	last_throughput[$neighbor]="${mbps:-0}"
 
 	local lat="${last_latency[$neighbor]:-0}"
-	send_grpc "{\"from\":\"$NODE_ID\",\"to\":\"$neighbor\",\"latency\":$lat,\"throughput\":${mbps:-0},\"timestamp\":$(date +%s)}"
+	# send_grpc "{\"from\":\"$NODE_ID\",\"to\":\"$neighbor\",\"latency\":$lat,\"throughput\":${mbps:-0},\"timestamp\":$(date +%s)}"
+	send_json "{\"from\":\"$NODE_ID\",\"to\":\"$neighbor\",\"latency\":$lat,\"throughput\":${mbps:-0},\"timestamp\":$(date +%s)}"
 }
 
 # ---- Main loop ----
