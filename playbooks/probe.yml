@@ -21,9 +21,9 @@
         line: "nameserver 1.1.1.1"
         state: present
 
-    - name: Install iperf3 and jq
+    - name: Install iperf3 and jq and mosquitto-clients
       ansible.builtin.apt:
-        name: [iperf3, jq]
+        name: [iperf3, jq, mosquitto-clients]
         state: present
         update_cache: true
 
