@@ -1,0 +1,20 @@
+---
+- name: Configure custom PS1 prompt in /root/.bashrc
+  ansible.builtin.blockinfile:
+    path: /root/.bashrc
+    create: true
+    marker: "# {mark} ANSIBLE MANAGED BLOCK - custom PS1"
+    block: |
+      PROMPT_COMMAND='PS1_CMD1=$(ip route get 1.1.1.1 | awk -F"src " '"'"'NR == 1{ split($2, a," ");print a[1]}'"'"')'
+      PS1='\[\e[38;5;38m\]\A\[\e[0m\] \[\e[38;5;40m\]\u\[\e[0m\]@\[\e[38;5;40m\]\h\[\e[0m\](${PS1_CMD1}):\w \$'
+
+- name: Configure custom PS1 prompt in /home/pi/.bashrc
+  ansible.builtin.blockinfile:
+    path: /home/pi/.bashrc
+    create: true
+    owner: pi
+    group: pi
+    marker: "# {mark} ANSIBLE MANAGED BLOCK - custom PS1"
+    block: |
+      PROMPT_COMMAND='PS1_CMD1=$(ip route get 1.1.1.1 | awk -F"src " '"'"'NR == 1{ split($2, a," ");print a[1]}'"'"')'
+      PS1='\[\e[38;5;38m\]\A\[\e[0m\] \[\e[38;5;40m\]\u\[\e[0m\]@\[\e[38;5;40m\]\h\[\e[0m\](${PS1_CMD1}):\w \$'

@@ -1,11 +1,12 @@
 ---
 # Expects: mesh_ip, gateway_ip.
 
-- name: Install batman dependencies
+- name: Install dependencies
   ansible.builtin.apt:
     name:
       - batctl
       - wireless-tools
+      - systemd-resolved
     state: present
 
 - name: Load batman-adv kernel module
@@ -20,9 +21,9 @@
       [keyfile]
       unmanaged-devices=interface-name:bat0;interface-name:wlan0
 
-- name: Reload NetworkManager config
-  ansible.builtin.command: nmcli general reload conf
-  changed_when: false
+# - name: Reload NetworkManager config
+#   ansible.builtin.command: nmcli general reload conf
+#   changed_when: false
 
 - name: Deploy config_batman.sh
   ansible.builtin.copy:
@@ -61,9 +62,8 @@
   ansible.builtin.wait_for_connection:
     delay: 5
     timeout: 60
-
-- name: Enable NetworkManager on boot
+- name: Enable networkd
   ansible.builtin.systemd:
-    name: NetworkManager
+    name: systemd-networkd
     enabled: true
     state: started

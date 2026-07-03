@@ -24,6 +24,9 @@
     - name: Set hostname
       ansible.builtin.include_tasks: tasks/set_hostname.yml
 
+    - name: Configure bashrc prompt
+      ansible.builtin.include_tasks: tasks/configure_bashrc_prompt.yml
+
 - name: Provision batman mesh on all nodes
   hosts: all
   become: true
@@ -65,13 +68,12 @@
       ansible.builtin.include_tasks: tasks/configure_dhcp_server.yml
 
 - name: Configure DHCP clients on workers
-  hosts: workers
+  hosts: worker
   become: true
   gather_facts: false
   tasks:
     - name: Configure netplan on interfaces
       ansible.builtin.include_tasks: tasks/configure_dhcp_client.yml
-
 
 - name: Install k3s server on manager
   hosts: manager

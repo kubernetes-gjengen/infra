@@ -1,16 +1,12 @@
 ---
-- name: Install systemd-resolved
-  ansible.builtin.apt:
-    name: systemd-resolved
-    state: present
-    
-- name: Deploy dnsmasq config
+- name: Deploy netplan config
   ansible.builtin.template:
-    src: "{{ playbook_dir }}/templates/00-netplan-workers.yml.j2"
-    dest: /etc/netplan/00-netplan-workers-yaml
+    src: "{{ playbook_dir }}/templates/90-netplan-workers.yml.j2"
+    dest: /etc/netplan/90-netplan-workers.yaml
     owner: root
     group: root
     mode: "0600"
 
-- name: Apply that shii
+- name: Apply that shiii
   ansible.builtin.command: netplan apply
+
