@@ -54,6 +54,18 @@
     - name: Configure NAT
       ansible.builtin.include_tasks: tasks/configure_nat.yml
 
+- name: Configure DHCP server
+  hosts: new_managers
+  become: true
+  vars:
+    bat_interface: bat0
+    dhcp_start: "192.168.42.2"
+    dhcp_end: "192.168.42.254"
+    lease_time: 12
+  tasks:
+    - name: Configure DHCP
+      ansible.builtin.include_tasks: tasks/configure_dhcp_server.yml
+
 - name: Install k3s server on new manager
   hosts: new_managers
   become: true

@@ -1,0 +1,7 @@
+interface={{bat_interface}}
+bind-interfaces
+domain-needed
+bogus-priv
+dhcp-range={{dhcp_start}},{{dhcp_end}},{lease_time}}h
+dhcp-option=option:router,{{hostvars[inventory_hostname]['assigned_ip']}}
+dhcp-option=option:dns-server,{{hostvars[inventory_hostname]['assigned_ip']}}
