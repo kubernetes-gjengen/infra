@@ -1,14 +1,16 @@
 ---
 - name: Configure custom PS1 prompt in /root/.bashrc
+  tags: configure_prompt
   ansible.builtin.blockinfile:
     path: /root/.bashrc
     create: true
     marker: "# {mark} ANSIBLE MANAGED BLOCK - custom PS1"
     block: |
       PROMPT_COMMAND='PS1_CMD1=$(ip route get 1.1.1.1 | awk -F"src " '"'"'NR == 1{ split($2, a," ");print a[1]}'"'"')'
-      PS1='\[\e[38;5;38m\]\A\[\e[0m\] \[\e[38;5;40m\]\u\[\e[0m\]@\[\e[38;5;40m\]\h\[\e[0m\](${PS1_CMD1}):\w \$'
+      PS1='\[\e[38;5;38m\]\A\[\e[0m\] \[\e[92m\]\u@\h\[\e[0m\](\[\e[38;5;208m\]${PS1_CMD1}\[\e[0m\]):\w \$ '
 
 - name: Configure custom PS1 prompt in /home/pi/.bashrc
+  tags: configure_prompt
   ansible.builtin.blockinfile:
     path: /home/pi/.bashrc
     create: true
@@ -17,4 +19,4 @@
     marker: "# {mark} ANSIBLE MANAGED BLOCK - custom PS1"
     block: |
       PROMPT_COMMAND='PS1_CMD1=$(ip route get 1.1.1.1 | awk -F"src " '"'"'NR == 1{ split($2, a," ");print a[1]}'"'"')'
-      PS1='\[\e[38;5;38m\]\A\[\e[0m\] \[\e[38;5;40m\]\u\[\e[0m\]@\[\e[38;5;40m\]\h\[\e[0m\](${PS1_CMD1}):\w \$'
+      PS1='\[\e[38;5;38m\]\A\[\e[0m\] \[\e[92m\]\u@\h\[\e[0m\](\[\e[38;5;208m\]${PS1_CMD1}\[\e[0m\]):\w \$ '

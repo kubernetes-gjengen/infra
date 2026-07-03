@@ -26,6 +26,7 @@
 
     - name: Configure bashrc prompt
       ansible.builtin.include_tasks: tasks/configure_bashrc_prompt.yml
+      tags: configure_prompt
 
 - name: Provision batman mesh on all nodes
   hosts: all
