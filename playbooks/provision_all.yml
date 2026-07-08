@@ -28,7 +28,7 @@
       ansible.builtin.include_tasks: tasks/configure_bashrc_prompt.yml
       tags: configure_prompt
 
-- name: Provision batman mesh on all nodes
+- name: Provision common network config
   hosts: all
   become: true
   gather_facts: false
@@ -37,11 +37,27 @@
     base_ip_start: 1
 
   tasks:
-    - name: Provision batman on node
-      ansible.builtin.include_tasks: tasks/provision_batman_node.yml
+    - name: Provision network on node
+      ansible.builtin.include_tasks: tasks/00_configure_network_common.yml
       vars:
         mesh_ip: "{{ mesh_ip_prefix }}.{{ base_ip_start + groups['all'].index(inventory_hostname) }}"
         gateway_ip: "{{ mesh_ip_prefix }}.{{ base_ip_start }}"
+
+    - name: Recover from network cataclysm
+      ansible.builtin.add_host:
+        name: "{{ inventory_hostname }}"
+        ansible_host: "{{ inventory_hostname }}.local"
+
+    - name: Reset connection
+      ansible.builtin.meta: reset_connection
+    
+    - name: Wait for connection
+      ansible.builtin.wait_for_connection:
+        delay: 5
+        timeout: 60
+
+    - name: Reattach bat0 interface
+      ansible.builtin.command: ip link set wlan0 master bat0
 
 - name: Configure NAT routing on manager
   hosts: manager
@@ -67,14 +83,6 @@
   tasks:
     - name: Configure dnsmasq
       ansible.builtin.include_tasks: tasks/configure_dhcp_server.yml
-
-- name: Configure DHCP clients on workers
-  hosts: worker
-  become: true
-  gather_facts: false
-  tasks:
-    - name: Configure netplan on interfaces
-      ansible.builtin.include_tasks: tasks/configure_dhcp_client.yml
 
 - name: Install k3s server on manager
   hosts: manager

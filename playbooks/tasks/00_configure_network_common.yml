@@ -13,21 +13,28 @@
   ansible.builtin.command: modprobe batman-adv
   changed_when: false
 
-- name: Prevent NetworkManager from managing wlan0 and bat0
-  ansible.builtin.copy:
-    dest: /etc/NetworkManager/conf.d/unmanaged-bat0.conf
-    mode: "0644"
-    content: |
-      [keyfile]
-      unmanaged-devices=interface-name:bat0;interface-name:wlan0
+- name: Stop wpa_supplicant
+  ansible.builtin.systemd:
+    name: wpa_supplicant
+    enabled: false
+    state: stopped
 
-# - name: Reload NetworkManager config
-#   ansible.builtin.command: nmcli general reload conf
-#   changed_when: false
+- name: Unblock wifi (rfkill)
+  ansible.builtin.command: rfkill unblock wifi
 
-- name: Deploy config_batman.sh
+- name: Unblock wifi (nmcli radio)
+  ansible.builtin.command: nmcli radio wifi on #ensures the system doesn't brick itself if someone re-enables NM
+  failed_when: false
+
+- name: Banish NetworkManager to the shadow realm
+  ansible.builtin.systemd:
+    name: NetworkManager
+    enabled: false
+    state: stopped
+
+- name: Deploy config_batman2_electric_boogaloo.sh
   ansible.builtin.copy:
-    src: "{{ playbook_dir }}/../shellscripts/config_batman.sh"
+    src: "{{ playbook_dir }}/../shellscripts/config_batman2_electric_boogaloo.sh"
     dest: /usr/local/bin/config_batman.sh
     mode: "0755"
 
@@ -43,7 +50,7 @@
 
       [Service]
       Type=oneshot
-      ExecStart=/usr/local/bin/config_batman.sh {{ mesh_ip }} {{ gateway_ip }}
+      ExecStart=/usr/local/bin/config_batman.sh
 
       [Install]
       WantedBy=multi-user.target
@@ -58,13 +65,18 @@
     enabled: true
     state: started
 
-- name: Wait for connection to recover after wlan0 reconfiguration
-  ansible.builtin.wait_for_connection:
-    delay: 5
-    timeout: 60
-    
 - name: Enable networkd
   ansible.builtin.systemd:
     name: systemd-networkd
     enabled: true
     state: started
+
+- name: Deploy netplan config
+  ansible.builtin.template:
+    src: "{{ playbook_dir }}/templates/90-netplan-workers.yml.j2"
+    dest: "/etc/netplan/90-netplan-batman.yaml"
+    mode: "0600"
+
+- name: Apply netplan config
+  ansible.builtin.command: sudo netplan apply
+  
