@@ -59,7 +59,7 @@ def scan_pis():
         print(f"discover.py: nmap scan failed: {exc}", file=sys.stderr)
         return []
 
-    pis = []
+    by_mac = {}
     for host in ET.fromstring(out).findall("host"):
         status = host.find("status")
         if status is None or status.get("state") != "up":
@@ -70,9 +70,25 @@ def scan_pis():
                 ip = addr.get("addr")
             elif addr.get("addrtype") == "mac":
                 mac = (addr.get("addr") or "").lower()
-        if ip and mac and mac.startswith(PI_OUIS):
-            pis.append((ip, mac))
+        if not (ip and mac and mac.startswith(PI_OUIS)):
+            continue
+        ip_key = tuple(int(octet) for octet in ip.split("."))
+        # A Pi can answer ARP on more than one IP at once (e.g. a stale DHCP
+        # lease that never got released alongside a fresh one). Collapse to
+        # one entry per MAC so it isn't counted as two separate nodes; keep
+        # the lowest IP for determinism.
+        existing = by_mac.get(mac)
+        if existing is not None:
+            kept = ip if ip_key < existing[0] else existing[1]
+            print(
+                f"discover.py: {mac} has multiple live IPs "
+                f"({existing[1]}, {ip}); using {kept}",
+                file=sys.stderr,
+            )
+        if existing is None or ip_key < existing[0]:
+            by_mac[mac] = (ip_key, ip)
 
+    pis = [(ip, mac) for mac, (_, ip) in by_mac.items()]
     pis.sort(key=lambda pi: tuple(int(octet) for octet in pi[0].split(".")))
     return pis
 

@@ -55,12 +55,19 @@
     - name: Provision network on node
       ansible.builtin.include_tasks: tasks/00_configure_network_common.yml
 
-    # netplan apply tears down and rebuilds the interfaces, dropping our SSH
-    # session. Fire it and don't wait (poll: 0), then reconnect below via the
-    # node's stable <hostname>.local name. Only run it when the netplan profile
-    # actually changed, so re-runs don't needlessly bounce the network.
-    - name: Apply netplan config (disrupts the connection)
-      ansible.builtin.command: netplan apply
+    # Stopping NetworkManager (in 00_configure_network_common.yml) doesn't
+    # release the DHCP lease it already holds on eth0, so once networkd
+    # requests its own lease, eth0 is left carrying two addresses. Flush it
+    # right before netplan apply so networkd's DHCP client starts clean.
+    #
+    # Both commands tear down and rebuild the interfaces, dropping our SSH
+    # session. Fire them and don't wait (poll: 0), then reconnect below via
+    # the node's stable <hostname>.local name. Only run this when the netplan
+    # profile actually changed, so re-runs don't needlessly bounce the
+    # network - that also happens to be exactly when NetworkManager was last
+    # stopped, i.e. the only time a stale lease could have been left behind.
+    - name: Flush stale eth0 address and apply netplan config (disrupts the connection)
+      ansible.builtin.shell: ip addr flush dev eth0 && netplan apply
       async: 60
       poll: 0
       when: netplan_cfg is changed

@@ -8,6 +8,38 @@
 #   2. batman.service stopped before interface teardown
 #   3. dnsmasq removed before systemd-resolved is restored
 #   4. Reboot last to flush remaining kernel state
+#
+# One-off, opt-in only (tagged `never`, so a normal run skips it):
+#   ansible-playbook reset.yml --tags cleanup_eth0
+# Fixes nodes provisioned before the eth0 flush was added to
+# provision_all.yml, where NetworkManager's original DHCP lease was never
+# released when systemd-networkd took over, leaving eth0 with two addresses.
+# A full reset+reboot also clears this, but that's a heavy hammer for nodes
+# that are otherwise fine.
+- name: Flush stale eth0 address left over from NetworkManager->networkd handoff
+  hosts: all
+  become: true
+  gather_facts: false
+  tags: [never, cleanup_eth0]
+
+  tasks:
+    - name: Flush eth0 and reapply netplan to reacquire a single clean lease (disrupts the connection)
+      ansible.builtin.shell: ip addr flush dev eth0 && netplan apply
+      async: 60
+      poll: 0
+
+    - name: Recover from network cataclysm (reconnect over mDNS)
+      ansible.builtin.add_host:
+        name: "{{ inventory_hostname }}"
+        ansible_host: "{{ pi_hostname }}.local"
+
+    - name: Reset connection
+      ansible.builtin.meta: reset_connection
+
+    - name: Wait for connection
+      ansible.builtin.wait_for_connection:
+        delay: 5
+        timeout: 60
 
 - name: Uninstall k3s agent from workers
   hosts: worker
@@ -46,7 +78,7 @@
       ansible.builtin.replace:
         path: /boot/firmware/cmdline.txt
         regexp: ' ?(cgroup_enable=cpuset|cgroup_enable=memory|cgroup_memory=1|systemd\.unified_cgroup_hierarchy=1)'
-        replace: ''
+        replace: ""
 
 - name: Reset batman configuration on all hosts
   hosts: all
@@ -94,14 +126,6 @@
         path: /etc/netplan/90-netplan-batman.yaml
         state: absent
 
-    # Provisioning enabled networkd; disable it so only NetworkManager runs.
-    - name: Disable systemd-networkd
-      ansible.builtin.systemd:
-        name: systemd-networkd
-        state: stopped
-        enabled: false
-      failed_when: false
-
     - name: Remove batctl and wireless-tools packages
       ansible.builtin.apt:
         name:
@@ -114,24 +138,27 @@
         path: /usr/local/bin/config_batman.sh
         state: absent
 
-    - name: Start and enable NetworkManager
+    # Disable networkd so it does not start after the reboot at the end of this
+    # playbook. Do NOT stop it now — it owns eth0 (our SSH path) and stopping
+    # it mid-play would drop the connection. The transition to NetworkManager
+    # happens cleanly on the reboot that closes out the reset run.
+    - name: Disable systemd-networkd (takes effect on next boot)
+      ansible.builtin.systemd:
+        name: systemd-networkd
+        enabled: false
+
+    # Mark NetworkManager and wpa_supplicant to start on next boot.
+    - name: Enable NetworkManager
       ansible.builtin.systemd:
         name: NetworkManager
-        state: started
         enabled: true
       failed_when: false
 
-    - name: Start and enable wpa_supplicant
+    - name: Enable wpa_supplicant
       ansible.builtin.systemd:
         name: wpa_supplicant
-        state: started
         enabled: true
       failed_when: false
-
-    - name: Wait for hosts to stabilize after network changes
-      ansible.builtin.wait_for_connection:
-        delay: 5
-        timeout: 60
 
 - name: Reset NAT routing on manager
   hosts: manager
