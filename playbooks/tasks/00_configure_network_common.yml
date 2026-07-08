@@ -78,5 +78,7 @@
     mode: "0600"
 
 - name: Apply netplan config
-  ansible.builtin.command: sudo netplan apply
+  ansible.builtin.command: "sleep 2 && netplan apply"
+  async: 45
+  poll: 0
   
