@@ -5,6 +5,12 @@ network:
     bat0:
       match:
         name: bat0
+{% if 'manager' in group_names %}
+      dhcp4: false
+      addresses:
+        - {{mesh_ip}}/24
+{% else %}
       dhcp4: true
+{% endif %}
     eth0:
       dhcp4: true

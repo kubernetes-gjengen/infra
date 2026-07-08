@@ -5,3 +5,8 @@ bogus-priv
 dhcp-range={{dhcp_start}},{{dhcp_end}},{{lease_time}}h
 dhcp-option=option:router,{{hostvars[inventory_hostname]['assigned_ip']}}
 dhcp-option=option:dns-server,{{hostvars[inventory_hostname]['assigned_ip']}}
+resolv-file=/run/systemd/resolve/resolv.conf
+dhcp-option=option:domain-search,gotham
+domain=gotham
+local=/gotham/
+expand-hosts
