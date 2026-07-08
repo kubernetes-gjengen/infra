@@ -9,14 +9,15 @@ This repo automates the setup of a **MANET (Mobile Ad-hoc NETwork)** using the [
 ## Running the playbook
 
 ```bash
-# Provision all nodes and configure batman
-ansible-playbook -i pis.ini config-batman.yml
+# From the playbooks/ directory. Discovers Pis on the LAN and provisions them.
+ansible-playbook provision_all.yml
 
-# Target a single host
-ansible-playbook -i pis.ini config-batman.yml --limit 192.168.3.19
+# Target a subset (names are manager0 / worker0 / worker1 … from discovery)
+ansible-playbook provision_all.yml --limit worker0
 ```
 
-`ansible.cfg` sets `pis.ini` as the default inventory, so `-i pis.ini` can be omitted if running from the repo root.
+`playbooks/ansible.cfg` sets `inventories/discover.py` as the default inventory,
+so no `-i` flag is needed when running from `playbooks/`.
 
 ## Architecture
 
@@ -25,10 +26,11 @@ ansible-playbook -i pis.ini config-batman.yml --limit 192.168.3.19
 1. **All nodes** — installs `batctl`, copies and runs `config_batman.sh <mesh_ip>` where the IP is derived as `192.168.3.<base_ip_start + node_index>` (base `241`).
 2. **Manager node only** — copies and runs `bridge.sh`, bridging `bat0` (mesh) and `eth0` (ethernet) into `br0` so the operator's laptop can reach all mesh nodes via a single ethernet connection.
 
-### Inventory files
+### Inventory
 
-- `pis.ini` — **setup-time** inventory: nodes reachable over the ethernet LAN (pre-batman IPs). Used when first running the playbook.
-- `pis-batman.ini` — **post-setup** inventory: nodes addressed by their batman mesh IPs (`192.168.3.241–245`), workers accessed via `ProxyJump` through the manager. Used after the mesh is running.
+- `inventories/discover.py` — **dynamic inventory** (the default). ARP-scans the wired setup subnet (`192.168.3.0/24`), keeps hosts with a Raspberry Pi MAC OUI, and splits them into `manager` (first Pi 5 found, else lowest-IP Pi) and `worker` groups. Hostnames (`manager0`, `worker0`, …) are re-numbered by IP on every run — no persisted state. Requires passwordless `sudo nmap` on the provisioner.
+- Mesh IPs are **not** in inventory: workers lease their `bat0` address from the manager's DHCP server, and the manager's fixed `bat0` address is `manager_mesh_ip` in `group_vars/all.yml` (`192.168.42.1`).
+- `inventories/static-eth.ini` / `static-bat.ini` — legacy static inventories, kept for reference / manual runs (`-i inventories/static-eth.ini`).
 
 ### Shell scripts
 

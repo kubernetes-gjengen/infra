@@ -6,6 +6,12 @@
   ansible.builtin.reboot:
     reboot_timeout: 120
     post_reboot_delay: 60
+  when: cgroups_changed | default(false)
+
+- name: Check whether k3s is already installed
+  ansible.builtin.stat:
+    path: /usr/local/bin/k3s
+  register: k3s_bin
 
 - name: Install k3s server
   ansible.builtin.shell: |
@@ -13,6 +19,7 @@
     curl -sfL https://get.k3s.io | sh -
   args:
     executable: /bin/bash
+  when: not k3s_bin.stat.exists
 
 - name: Wait for node-token to appear
   ansible.builtin.wait_for:

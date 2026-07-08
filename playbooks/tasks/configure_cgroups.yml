@@ -28,3 +28,10 @@
     content: "{{ new_cmdline }}\n"
     mode: "0644"
   when: new_cmdline != (cmdline.content | b64decode | trim)
+  register: cmdline_write
+
+# Exposed so callers can gate the (otherwise unconditional) reboot on an
+# actual change - a reboot is only needed when cmdline.txt was rewritten.
+- name: Record whether cgroup settings changed
+  ansible.builtin.set_fact:
+    cgroups_changed: "{{ cmdline_write is changed }}"

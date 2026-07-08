@@ -1,0 +1,7 @@
+---
+# Single source of truth for the mesh gateway.
+#
+# The manager holds this fixed address on bat0 and runs the DHCP/DNS server
+# (dnsmasq). Workers lease their own bat0 address from it, so the manager's
+# is the only mesh IP that must be pinned down anywhere.
+manager_mesh_ip: "192.168.42.1"

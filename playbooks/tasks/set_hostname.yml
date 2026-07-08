@@ -3,6 +3,7 @@
 - name: Set hostname via hostnamectl
   ansible.builtin.hostname:
     name: "{{ pi_hostname }}"
+  register: hostname_result
 
 - name: Update 127.0.1.1 entry in /etc/hosts
   ansible.builtin.lineinfile:

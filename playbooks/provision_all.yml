@@ -1,5 +1,10 @@
 ---
-# Usage: ansible-playbook -i inventories/static.ini provision_all.yml
+# Usage: ansible-playbook provision_all.yml
+#
+# Uses the default dynamic inventory (inventories/discover.py), which scans the
+# LAN for Pis and assigns manager/worker roles + hostnames. Runs are idempotent:
+# already-provisioned nodes are verified in place and are not rebooted unless
+# their cgroup boot config actually changes.
 #
 # Facts are gathered once in the first play (hosts: all).
 # All subsequent plays set gather_facts: false — hostvars retains the
@@ -9,20 +14,33 @@
   hosts: all
   become: true
 
-  tasks:
-    - name: Compute hostname from group and position
-      ansible.builtin.set_fact:
-        pi_hostname: >-
-          {{
-            (group_names | reject('equalto', 'all') | first) ~
-            groups[(group_names | reject('equalto', 'all') | first)].index(inventory_hostname)
-          }}
+  # pi_hostname (manager0 / workerN) is supplied by the discover.py inventory.
 
+  tasks:
     - name: Disable cloud-init
       ansible.builtin.include_tasks: tasks/disable_cloud_init.yml
 
+    # Installed before any network changes so that, once the mesh comes up and
+    # eth0 re-DHCPs, the nodes are still reachable at <hostname>.local via mDNS.
+    - name: Install avahi-daemon for .local (mDNS) resolution
+      ansible.builtin.apt:
+        name: avahi-daemon
+        state: present
+
+    - name: Ensure avahi-daemon is enabled and running
+      ansible.builtin.systemd:
+        name: avahi-daemon
+        enabled: true
+        state: started
+
     - name: Set hostname
       ansible.builtin.include_tasks: tasks/set_hostname.yml
+
+    - name: Restart avahi to advertise the new hostname
+      ansible.builtin.systemd:
+        name: avahi-daemon
+        state: restarted
+      when: hostname_result is changed
 
     - name: Configure bashrc prompt
       ansible.builtin.include_tasks: tasks/configure_bashrc_prompt.yml
@@ -32,25 +50,30 @@
   hosts: all
   become: true
   gather_facts: false
-  vars:
-    mesh_ip_prefix: "192.168.42"
-    base_ip_start: 1
 
   tasks:
     - name: Provision network on node
       ansible.builtin.include_tasks: tasks/00_configure_network_common.yml
-      vars:
-        mesh_ip: "{{ mesh_ip_prefix }}.{{ base_ip_start + groups['all'].index(inventory_hostname) }}"
-        gateway_ip: "{{ mesh_ip_prefix }}.{{ base_ip_start }}"
 
-    - name: Recover from network cataclysm
+    # netplan apply tears down and rebuilds the interfaces, dropping our SSH
+    # session. Fire it and don't wait (poll: 0), then reconnect below via the
+    # node's stable <hostname>.local name. Only run it when the netplan profile
+    # actually changed, so re-runs don't needlessly bounce the network.
+    - name: Apply netplan config (disrupts the connection)
+      ansible.builtin.command: netplan apply
+      async: 60
+      poll: 0
+      when: netplan_cfg is changed
+
+    - name: Recover from network cataclysm (reconnect over mDNS)
       ansible.builtin.add_host:
         name: "{{ inventory_hostname }}"
-        ansible_host: "{{ inventory_hostname }}.local"
+        ansible_host: "{{ pi_hostname }}.local"
+      when: netplan_cfg is changed
 
     - name: Reset connection
       ansible.builtin.meta: reset_connection
-    
+
     - name: Wait for connection
       ansible.builtin.wait_for_connection:
         delay: 5
@@ -58,6 +81,7 @@
 
     - name: Reattach bat0 interface
       ansible.builtin.command: ip link set wlan0 master bat0
+      changed_when: false
 
 - name: Configure NAT routing on manager
   hosts: manager
@@ -118,10 +142,13 @@
   gather_facts: false
 
   tasks:
+    # Only reboot nodes whose cmdline.txt was actually rewritten - already
+    # provisioned workers keep running untouched.
     - name: Reboot
       ansible.builtin.reboot:
         reboot_timeout: 120
         post_reboot_delay: 60
+      when: cgroups_changed | default(false)
 
 - name: Install k3s agent on workers
   hosts: worker
@@ -159,19 +186,8 @@
   become: true
 
   vars:
-    manager_bat_ip: 192.168.42.1
+    manager_bat_ip: "{{ manager_mesh_ip }}"
 
   tasks:
     - name: Configure network prober
       ansible.builtin.include_tasks: tasks/configure_prober.yml
-
-- name: Reboot workers
-  hosts: worker
-  become: true
-  gather_facts: false
-
-  tasks:
-    - name: Reboot
-      ansible.builtin.reboot:
-        reboot_timeout: 120
-        post_reboot_delay: 10

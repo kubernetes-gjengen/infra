@@ -1,5 +1,10 @@
 ---
-# Expects: mesh_ip, gateway_ip.
+# Configures batman-adv + the netplan profile for bat0/eth0.
+#
+# The manager's static bat0 address comes from `manager_mesh_ip`
+# (group_vars/all.yml); workers get bat0 via DHCP from the manager. This file
+# only *renders* the netplan config and registers `netplan_cfg` - the calling
+# play runs `netplan apply` afterwards so it can handle the connection drop.
 
 - name: Install dependencies
   ansible.builtin.apt:
@@ -76,7 +81,5 @@
     src: "{{ playbook_dir }}/templates/90-netplan-workers.yml.j2"
     dest: "/etc/netplan/90-netplan-batman.yaml"
     mode: "0600"
+  register: netplan_cfg
 
-- name: Apply netplan config
-  ansible.builtin.command: sudo netplan apply
-  

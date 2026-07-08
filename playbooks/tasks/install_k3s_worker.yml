@@ -23,6 +23,11 @@
         else hostvars[ansible_play_hosts[0]]['_k3s_token_fallback']['stdout']
       }}
 
+- name: Check whether k3s is already installed
+  ansible.builtin.stat:
+    path: /usr/local/bin/k3s
+  register: k3s_bin
+
 - name: Wait for internet connectivity
   ansible.builtin.command: curl -sf --head https://get.k3s.io
   register: _connectivity
@@ -30,6 +35,7 @@
   retries: 12
   delay: 10
   changed_when: false
+  when: not k3s_bin.stat.exists
 
 - name: Install k3s agent
   ansible.builtin.shell: |
@@ -37,3 +43,4 @@
     curl -sfL https://get.k3s.io | K3S_URL=https://{{ groups['manager'][0] }}.gotham:6443 K3S_TOKEN={{ k3s_join_token }} sh -
   args:
     executable: /bin/bash
+  when: not k3s_bin.stat.exists

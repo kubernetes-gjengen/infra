@@ -63,6 +63,10 @@
   ansible.builtin.set_fact:
     bat_mac: "{{ wlan_mac.stdout | trim }}"
 
+# Persisting bat_mac back only makes sense for a static .ini inventory. With
+# the dynamic discover.py inventory there is no file to rewrite (and doing so
+# would corrupt the script), so these are skipped - bat_mac is set live above
+# and consumed straight from hostvars when building /etc/bat-hosts below.
 - name: Remove stale bat_mac from inventory line
   ansible.builtin.replace:
     path: "{{ inventory_file }}"
@@ -71,6 +75,7 @@
   delegate_to: localhost
   become: false
   throttle: 1
+  when: inventory_file | default('') is match('.*\.ini$')
 
 - name: Write bat_mac to inventory
   ansible.builtin.replace:
@@ -80,6 +85,7 @@
   delegate_to: localhost
   become: false
   throttle: 1
+  when: inventory_file | default('') is match('.*\.ini$')
 
 - name: Build bat-hosts content
   ansible.builtin.set_fact:
