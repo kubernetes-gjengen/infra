@@ -4,7 +4,7 @@
   become: true
 
   vars:
-    grpc_host: "192.168.42.1"
+    grpc_host: "{{ manager_mesh_ip }}"
     grpc_port: "30042"
 
   handlers:

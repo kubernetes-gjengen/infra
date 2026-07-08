@@ -10,25 +10,25 @@
     name: systemd-resolved
     state: present
 
-- name: Set loopback as default DNS server
+- name: Set dnsmasq (loopback) as the DNS resolver
   ansible.builtin.lineinfile:
     path: /etc/systemd/resolved.conf
     regexp: '^\s*#?DNS\b'
     line: "DNS=127.0.0.1"
 
-- name: Disable stub-resolver (or something like that)
+- name: Clear fallback DNS to prevent external leaks
   ansible.builtin.lineinfile:
     path: /etc/systemd/resolved.conf
     regexp: '^\s*#?FallbackDNS\b'
     line: "FallbackDNS="
 
-- name: Disable stub-resolver (or something like that)
+- name: Set .gotham as the local DNS search domain
   ansible.builtin.lineinfile:
     path: /etc/systemd/resolved.conf
     regexp: '^\s*#?Domains\b'
     line: "Domains=~gotham"
 
-- name: Disable stub-resolver (or something like that)
+- name: Disable systemd-resolved stub listener so dnsmasq can bind port 53
   ansible.builtin.lineinfile:
     path: /etc/systemd/resolved.conf
     regexp: '^\s*#?DNSStubListener\b'

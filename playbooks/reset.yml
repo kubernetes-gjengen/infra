@@ -1,4 +1,14 @@
 ---
+# Tears down all provisioning on every node and returns them to a clean
+# stock state. Safe to run on a partially provisioned cluster — every task is
+# guarded with failed_when: false or stat checks.
+#
+# Order matters:
+#   1. k3s agents (workers) before k3s server (manager)
+#   2. batman.service stopped before interface teardown
+#   3. dnsmasq removed before systemd-resolved is restored
+#   4. Reboot last to flush remaining kernel state
+
 - name: Uninstall k3s agent from workers
   hosts: worker
   become: true
@@ -43,6 +53,15 @@
   become: true
 
   tasks:
+    # Stop the service before tearing down the interfaces it manages,
+    # so it cannot re-run and undo the teardown mid-play.
+    - name: Stop and disable batman service
+      ansible.builtin.systemd:
+        name: batman
+        state: stopped
+        enabled: false
+      failed_when: false
+
     - name: Remove wlan0 from batman-adv mesh
       ansible.builtin.command: batctl if del wlan0
       failed_when: false
@@ -67,6 +86,22 @@
       ansible.builtin.command: iwconfig wlan0 mode managed
       failed_when: false
 
+    # Remove the netplan profile that provisioning deployed. Leaving it in place
+    # would cause systemd-networkd to error on bat0 (non-existent) on the next
+    # boot, and would prevent NetworkManager from managing eth0.
+    - name: Remove netplan batman profile
+      ansible.builtin.file:
+        path: /etc/netplan/90-netplan-batman.yaml
+        state: absent
+
+    # Provisioning enabled networkd; disable it so only NetworkManager runs.
+    - name: Disable systemd-networkd
+      ansible.builtin.systemd:
+        name: systemd-networkd
+        state: stopped
+        enabled: false
+      failed_when: false
+
     - name: Remove batctl and wireless-tools packages
       ansible.builtin.apt:
         name:
@@ -74,14 +109,9 @@
           - wireless-tools
         state: absent
 
-    - name: Remove config script from /usr/local/bin
+    - name: Remove batman config script
       ansible.builtin.file:
         path: /usr/local/bin/config_batman.sh
-        state: absent
-
-    - name: Remove NetworkManager unmanaged-devices config
-      ansible.builtin.file:
-        path: /etc/NetworkManager/conf.d/unmanaged-bat0.conf
         state: absent
 
     - name: Start and enable NetworkManager
@@ -105,7 +135,7 @@
 
 - name: Reset NAT routing on manager
   hosts: manager
-  become: yes
+  become: true
 
   tasks:
     - name: Stop and disable nat-routing service
@@ -145,23 +175,59 @@
         state: present
         reload: true
 
+- name: Reset DHCP/DNS on manager
+  hosts: manager
+  become: true
+
+  tasks:
+    - name: Stop and disable dnsmasq
+      ansible.builtin.systemd:
+        name: dnsmasq
+        state: stopped
+        enabled: false
+      failed_when: false
+
+    - name: Remove dnsmasq package
+      ansible.builtin.apt:
+        name: dnsmasq
+        state: absent
+
+    # Restore the systemd-resolved settings that configure_dhcp_server.yml
+    # changed. Without this the Pi has no DNS after dnsmasq is gone.
+    - name: Restore default DNS resolver
+      ansible.builtin.lineinfile:
+        path: /etc/systemd/resolved.conf
+        regexp: '^\s*#?DNS\b'
+        line: "#DNS="
+
+    - name: Restore fallback DNS
+      ansible.builtin.lineinfile:
+        path: /etc/systemd/resolved.conf
+        regexp: '^\s*#?FallbackDNS\b'
+        line: "#FallbackDNS="
+
+    - name: Clear local DNS search domain
+      ansible.builtin.lineinfile:
+        path: /etc/systemd/resolved.conf
+        regexp: '^\s*#?Domains\b'
+        line: "#Domains="
+
+    - name: Re-enable systemd-resolved stub listener
+      ansible.builtin.lineinfile:
+        path: /etc/systemd/resolved.conf
+        regexp: '^\s*#?DNSStubListener\b'
+        line: "#DNSStubListener=yes"
+
+    - name: Restart systemd-resolved
+      ansible.builtin.systemd:
+        name: systemd-resolved
+        state: restarted
+
 - name: Remove remaining artifacts from all hosts
   hosts: all
   become: true
 
   tasks:
-    - name: Stop and disable batman service
-      ansible.builtin.systemd:
-        name: batman
-        state: stopped
-        enabled: false
-      failed_when: false
-
-    - name: Remove batman service file
-      ansible.builtin.file:
-        path: /etc/systemd/system/batman.service
-        state: absent
-
     - name: Stop and disable network_prober service
       ansible.builtin.systemd:
         name: network_prober
@@ -169,10 +235,13 @@
         enabled: false
       failed_when: false
 
-    - name: Remove network_prober service file
+    - name: Remove batman and network_prober service files
       ansible.builtin.file:
-        path: /etc/systemd/system/network_prober.service
+        path: "{{ item }}"
         state: absent
+      loop:
+        - /etc/systemd/system/batman.service
+        - /etc/systemd/system/network_prober.service
 
     - name: Reload systemd daemon
       ansible.builtin.systemd:
@@ -183,24 +252,14 @@
         path: /logs
         state: absent
 
-    - name: Remove /home/pi/ip_addr
-      ansible.builtin.file:
-        path: /home/pi/ip_addr
-        state: absent
-
-    - name: Remove grpcurl
-      ansible.builtin.file:
-        path: /usr/local/bin/grpcurl
-        state: absent
-
-    - name: Remove network prober files
+    - name: Remove prober and kubeconfig files
       ansible.builtin.file:
         path: "{{ item }}"
         state: absent
       loop:
+        - /usr/local/bin/grpcurl
         - /home/pi/message.proto
         - /home/pi/network_prober.sh
-        - /home/pi/network_probe_runner.sh
         - /home/pi/kubeconfig
         - /etc/bat-hosts
 
@@ -216,7 +275,7 @@
 
 - name: Reboot all hosts to clear remaining runtime state
   hosts: all
-  become: yes
+  become: true
 
   tasks:
     - name: Reboot

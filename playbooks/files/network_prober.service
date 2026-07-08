@@ -1,7 +1,0 @@
-[Unit]
-Description=Network prober service
-
-[Service]
-ExecStart=/home/pi/network_probe_runner.sh
-Restart=always
-

@@ -1,10 +1,13 @@
-# We dont need to check in venv
+# virtualenv / pyenv
 .venv
 ./env/
 ./.env
-
-# ansible specific
-./artifacts
-
-# pyenv
 .python-version
+
+# Python bytecode
+__pycache__/
+*.pyc
+
+# ansible artifacts
+./artifacts
+playbooks/kubeconfig.yml
