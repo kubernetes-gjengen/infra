@@ -30,3 +30,4 @@
 - name: Read join token
   ansible.builtin.shell: cat /var/lib/rancher/k3s/server/node-token
   register: join_token
+  changed_when: false

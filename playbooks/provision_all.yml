@@ -6,15 +6,14 @@
 # already-provisioned nodes are verified in place and are not rebooted unless
 # their cgroup boot config actually changes.
 #
-# Facts are gathered once in the first play (hosts: all).
-# All subsequent plays set gather_facts: false — hostvars retains the
-# cached facts for the entire playbook run, so nothing is lost.
+# No task in this repo reads an ansible_* gathered fact (grep confirms it),
+# so every play sets gather_facts: false to skip the setup module entirely.
+# pi_hostname etc. come from the discover.py inventory, not gathered facts.
 
 - name: Set hostname on all nodes
   hosts: all
   become: true
-
-  # pi_hostname (manager0 / workerN) is supplied by the discover.py inventory.
+  gather_facts: false
 
   tasks:
     - name: Disable cloud-init
@@ -45,6 +44,21 @@
     - name: Configure bashrc prompt
       ansible.builtin.include_tasks: tasks/configure_bashrc_prompt.yml
       tags: configure_prompt
+
+    # discover.py reassigns manager0/workerN names by current IP order on
+    # every scan (no persisted identity), so this play can rename many hosts
+    # in the same run. Avahi needs a moment to withdraw stale records and
+    # announce new ones across the mesh - the very next play immediately
+    # depends on .local resolution to reconnect after the network bounce, so
+    # give avahi a beat to converge first. Only pauses when a rename actually
+    # happened this run; a no-op re-provision skips it.
+    - name: Let mDNS converge after hostname changes
+      ansible.builtin.command: sleep 15
+      delegate_to: localhost
+      become: false
+      run_once: true
+      changed_when: false
+      when: ansible_play_hosts | map('extract', hostvars, 'hostname_result') | selectattr('changed') | list | length > 0
 
 - name: Provision common network config
   hosts: all
@@ -142,6 +156,7 @@
     - name: Read join token
       ansible.builtin.shell: cat /var/lib/rancher/k3s/server/node-token
       register: k3s_join_token
+      changed_when: false
 
 - name: Reboot workers to apply cgroup settings
   hosts: worker
@@ -169,14 +184,35 @@
 - name: Fetch k3s config to controller
   hosts: manager
   gather_facts: false
+  tags: fetch_kubeconfig
 
   tasks:
-    - name: Copy k3s config
+    # k3s.yaml always hardcodes server: https://127.0.0.1:6443 - fine on the
+    # manager itself, useless fetched raw to a remote controller. Substitute
+    # in the manager's actual wired IP, queried fresh here rather than taken
+    # from ansible_host, since a prior play in this same run may have
+    # redirected ansible_host to the mDNS name after a netplan bounce - and
+    # k3s's self-signed cert's SANs cover the real IP, not that hostname.
+    - name: Get manager's wired IP
+      ansible.builtin.shell: ip -4 addr show eth0 | grep -oP '(?<=inet )[\d.]+'
+      register: manager_wired_ip
+      changed_when: false
+
+    - name: Read manager kubeconfig
       become: true
-      ansible.builtin.fetch:
+      ansible.builtin.slurp:
         src: /etc/rancher/k3s/k3s.yaml
+      register: manager_kubeconfig
+
+    - name: Write kubeconfig to controller, pointed at the manager's reachable address
+      ansible.builtin.copy:
+        content: >-
+          {{ (manager_kubeconfig.content | b64decode).replace(
+            'https://127.0.0.1:6443',
+            'https://' + (manager_wired_ip.stdout | trim) + ':6443'
+          ) }}
         dest: "{{ playbook_dir }}/kubeconfig.yml"
-        flat: yes
+      delegate_to: localhost
 
 - name: Set up logs directory on all nodes
   hosts: all
@@ -191,6 +227,7 @@
   hosts: manager:worker
   tags: jalla
   become: true
+  gather_facts: false
 
   vars:
     manager_bat_ip: "{{ manager_mesh_ip }}"

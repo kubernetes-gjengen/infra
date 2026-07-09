@@ -2,6 +2,7 @@
 - name: Deploy network probe agent
   hosts: all
   become: true
+  gather_facts: false
 
   vars:
     grpc_host: "{{ manager_mesh_ip }}"
@@ -26,6 +27,7 @@
         name: [iperf3, jq, mosquitto-clients]
         state: present
         update_cache: true
+        cache_valid_time: 3600
 
     - name: Enable and start iperf3 server
       ansible.builtin.systemd:

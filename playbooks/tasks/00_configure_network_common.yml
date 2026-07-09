@@ -26,10 +26,12 @@
 
 - name: Unblock wifi (rfkill)
   ansible.builtin.command: rfkill unblock wifi
+  changed_when: false
 
 - name: Unblock wifi (nmcli radio)
   ansible.builtin.command: nmcli radio wifi on #ensures the system doesn't brick itself if someone re-enables NM
   failed_when: false
+  changed_when: false
 
 - name: Banish NetworkManager to the shadow realm
   ansible.builtin.systemd:
@@ -55,6 +57,7 @@
 
       [Service]
       Type=oneshot
+      RemainAfterExit=yes
       ExecStart=/usr/local/bin/config_batman.sh
 
       [Install]

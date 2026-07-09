@@ -11,3 +11,4 @@ __pycache__/
 # ansible artifacts
 ./artifacts
 playbooks/kubeconfig.yml
+playbooks/inventories/discovered_hosts.json
