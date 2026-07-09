@@ -1,5 +1,6 @@
 #!/bin/bash
 #Why use many commands when few tokens do trick?
+sudo batctl ra BATMAN_V
 sudo ip link set wlan0 down
 sudo iwconfig wlan0 mode ad-hoc
 sudo iwconfig wlan0 essid "meshnet"
