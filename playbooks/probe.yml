@@ -40,13 +40,13 @@
         remote_src: true
         creates: /usr/local/bin/grpcurl
 
-    - name: Add bat0 mesh IPs to /etc/hosts
-      ansible.builtin.lineinfile:
-        path: /etc/hosts
-        regexp: '\s{{ hostvars[item].inventory_hostname }}$'
-        line: "{{ hostvars[item].assigned_ip }} {{ hostvars[item].inventory_hostname }}"
-        state: present
-      loop: "{{ groups['all'] }}"
+    # - name: Add bat0 mesh IPs to /etc/hosts
+    #   ansible.builtin.lineinfile:
+    #     path: /etc/hosts
+    #     regexp: '\s{{ hostvars[item].inventory_hostname }}$'
+    #     line: "{{ hostvars[item].assigned_ip }} {{ hostvars[item].inventory_hostname }}"
+    #     state: present
+    #   loop: "{{ groups['all'] }}"
 
     - name: Copy message.proto
       ansible.builtin.copy:
@@ -79,8 +79,8 @@
           ExecStart=/home/pi/network_prober.sh
           Restart=always
           RestartSec=10
-          Environment="GRPC_HOST={{ grpc_host }}"
-          Environment="GRPC_PORT={{ grpc_port }}"
+          # Environment="GRPC_HOST={{ grpc_host }}"
+          # Environment="GRPC_PORT={{ grpc_port }}"
           Environment="NODE_ID={{ inventory_hostname }}"
           Environment="BAT_IFACE=bat0"
           Environment="PROTO_FILE=/home/pi/message.proto"

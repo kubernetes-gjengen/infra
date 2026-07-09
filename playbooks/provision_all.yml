@@ -83,7 +83,7 @@
 
     - name: Wait for connection
       ansible.builtin.wait_for_connection:
-        delay: 5
+        delay: 10
         timeout: 60
 
     - name: Reattach bat0 interface
@@ -197,4 +197,4 @@
 
   tasks:
     - name: Configure network prober
-      ansible.builtin.include_tasks: tasks/configure_prober.yml
+      ansible.builtin.include_tasks: probe.yml

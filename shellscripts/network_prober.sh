@@ -30,16 +30,16 @@ neighbor_to_ip() {
   getent hosts "$1" 2>/dev/null | awk '{print $1; exit}'
 }
 
-send_grpc() {
-  if ! grpcurl -plaintext \
-    -import-path "$(dirname "$PROTO_FILE")" \
-    -proto "$(basename "$PROTO_FILE")" \
-    -d "$1" \
-    "${GRPC_HOST}:${GRPC_PORT}" \
-    links.LinkService/SendData >/dev/null 2>&1; then
-    echo "$(date -Iseconds) WARN: grpcurl failed" >&2
-  fi
-}
+# send_grpc() {
+#   if ! grpcurl -plaintext \
+#     -import-path "$(dirname "$PROTO_FILE")" \
+#     -proto "$(basename "$PROTO_FILE")" \
+#     -d "$1" \
+#     "${GRPC_HOST}:${GRPC_PORT}" \
+#     links.LinkService/SendData >/dev/null 2>&1; then
+#     echo "$(date -Iseconds) WARN: grpcurl failed" >&2
+#   fi
+# }
 send_json() {
   mosquitto_pub -h "127.0.0.1" -p 31883 -t network/linkdata -m $1
 }
@@ -110,7 +110,7 @@ while true; do
     sleep $((RANDOM % 15))
     for neighbor in "${neighbors[@]}"; do
       [ -z "$neighbor" ] && continue
-      local_ip="$neighbor".local
+      local_ip="$neighbor".gotham
       [ -z "$local_ip" ] &&
         {
           echo "$(date -Iseconds) WARN: no IP for $neighbor, skipping throughput" >&2
