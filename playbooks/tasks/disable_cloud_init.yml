@@ -1,6 +1,12 @@
 ---
+- name: Check whether cloud-init is already disabled
+  ansible.builtin.stat:
+    path: /etc/cloud/cloud-init.disabled
+  register: cloud_init_disabled
+
 - name: Disable cloud-init
   ansible.builtin.file:
     path: /etc/cloud/cloud-init.disabled
     state: touch
     mode: "0644"
+  when: not cloud_init_disabled.stat.exists

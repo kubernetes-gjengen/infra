@@ -12,6 +12,7 @@
   retries: 6
   delay: 10
   ignore_unreachable: true
+  changed_when: false
   when: hostvars[groups['manager'][0]]['k3s_join_token'] is not defined
 
 - name: Set join token fact

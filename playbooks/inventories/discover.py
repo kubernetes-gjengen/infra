@@ -7,10 +7,21 @@ splits them into two groups:
 
   * manager - exactly one node. The first Raspberry Pi 5 found (its OUI is in
     PI5_OUIS); if there is no Pi 5, the lowest-IP Pi is promoted instead.
+    Sticky: once a MAC is manager, it stays manager across runs as long as
+    it's still on the network, even if a Pi 5 joins later.
   * worker  - every other Pi.
 
-Hostnames (manager0, worker0, worker1, ...) are assigned by ascending IP and
-are therefore re-numbered on every scan - there is no persisted state.
+Hostnames (manager0, worker0, worker1, ...) are keyed by MAC address and
+persisted across runs in STATE_PATH (discovered_hosts.json, next to this
+script). A MAC keeps its hostname forever once assigned, even if its IP
+changes or other Pis join/leave/reorder - only a MAC seen for the first time
+gets a newly minted name. This matters because k3s node identity and mDNS
+records are keyed off the hostname; renumbering it out from under an
+already-provisioned node leaves stale/duplicate state behind. Offline Pis
+keep their reserved slot (and worker-number) so it can't be reused by a
+different physical Pi later - they just don't appear in the inventory output
+until they're seen again. The state file is local, per-cluster machine
+state, not repo content - it's gitignored.
 
 Mesh IPs are deliberately NOT set here. Workers lease their bat0 address from
 the manager's DHCP server (dnsmasq), and the manager's fixed bat0 address lives
@@ -28,6 +39,7 @@ import json
 import subprocess
 import sys
 import xml.etree.ElementTree as ET
+from pathlib import Path
 
 # Wired subnet the Pis boot onto before the mesh exists.
 SCAN_SUBNET = "192.168.3.0/24"
@@ -39,6 +51,78 @@ PI5_OUIS = ("d8:3a:dd", "e4:5f:01")
 
 SSH_USER = "pi"
 SSH_PASSWORD = "raspberry"
+
+# Persisted MAC -> hostname assignments. Resolved relative to this file (not
+# cwd) so it works the same regardless of where ansible invokes the script
+# from.
+STATE_PATH = Path(__file__).resolve().parent / "discovered_hosts.json"
+
+
+def load_assignments():
+    """Load persisted MAC -> hostname assignments. Missing/corrupt -> empty."""
+    try:
+        with open(STATE_PATH) as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+def save_assignments(assignments):
+    """Persist MAC -> hostname assignments. Best-effort: a write failure
+    (e.g. read-only filesystem) shouldn't break inventory generation, it
+    just means names may be re-derived next run instead of staying pinned.
+    """
+    try:
+        with open(STATE_PATH, "w") as f:
+            json.dump(assignments, f, indent=2, sort_keys=True)
+            f.write("\n")
+    except OSError as exc:
+        print(f"discover.py: could not persist hostnames: {exc}", file=sys.stderr)
+
+
+def assign_hostnames(pis, assignments):
+    """Extend a MAC -> hostname map with any not-yet-seen MACs from `pis`
+    (a list of (ip, mac) sorted by ascending IP), and pin the manager.
+
+    Mutates and returns `assignments`. Existing entries are never renamed.
+    """
+    live_macs = {mac for _, mac in pis}
+
+    old_manager_mac = next(
+        (mac for mac, name in assignments.items() if name == "manager0"), None
+    )
+    if old_manager_mac in live_macs:
+        manager_mac = old_manager_mac
+    else:
+        # No manager yet, or the old one is offline - pick a new one with
+        # the original rule (prefer Pi 5, else lowest IP) among live Pis.
+        manager_mac = next(
+            (mac for _, mac in pis if mac.startswith(PI5_OUIS)),
+            pis[0][1] if pis else None,
+        )
+        if old_manager_mac is not None:
+            # Free its slot rather than leaving two MACs pointing at
+            # "manager0" - if it comes back it'll be treated as a new,
+            # unnamed Pi and given the next free workerN.
+            del assignments[old_manager_mac]
+
+    if manager_mac is not None:
+        assignments[manager_mac] = "manager0"
+
+    # Never reuse a workerN that's already claimed, even by a currently
+    # offline Pi - each physical Pi keeps its number for good.
+    used_worker_ns = {
+        int(name[len("worker") :])
+        for name in assignments.values()
+        if name.startswith("worker")
+    }
+    next_worker_n = max(used_worker_ns, default=-1) + 1
+    for _, mac in pis:
+        if mac != manager_mac and mac not in assignments:
+            assignments[mac] = f"worker{next_worker_n}"
+            next_worker_n += 1
+
+    return assignments
 
 
 def scan_pis():
@@ -97,11 +181,8 @@ def build_inventory():
     """Turn the scan result into an Ansible JSON inventory."""
     pis = scan_pis()
 
-    # Manager = first Pi 5 by IP order, else the lowest-IP Pi.
-    manager_idx = next(
-        (i for i, (_, mac) in enumerate(pis) if mac.startswith(PI5_OUIS)),
-        0 if pis else None,
-    )
+    assignments = assign_hostnames(pis, load_assignments())
+    save_assignments(assignments)
 
     inventory = {
         "manager": {"hosts": []},
@@ -109,15 +190,10 @@ def build_inventory():
         "_meta": {"hostvars": {}},
     }
 
-    worker_n = 0
-    for i, (ip, _mac) in enumerate(pis):
-        if i == manager_idx:
-            name = "manager0"
-            inventory["manager"]["hosts"].append(name)
-        else:
-            name = f"worker{worker_n}"
-            worker_n += 1
-            inventory["worker"]["hosts"].append(name)
+    for ip, mac in pis:
+        name = assignments[mac]
+        group = "manager" if name == "manager0" else "worker"
+        inventory[group]["hosts"].append(name)
 
         inventory["_meta"]["hostvars"][name] = {
             "ansible_host": ip,

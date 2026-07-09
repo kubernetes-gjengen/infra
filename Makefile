@@ -17,7 +17,7 @@ ifdef SKIP
   SKIP_FLAG := --skip-tags $(SKIP)
 endif
 
-.PHONY: help discover ping provision reset probe kubeconfig
+.PHONY: help discover ping provision reset probe kubeconfig deploy
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*##"; printf "\nUsage:\n  make \033[36m<target>\033[0m [LIMIT=<host>]\n\nTargets:\n"} \
@@ -45,12 +45,19 @@ probe: ## Deploy / update the network prober on all nodes
 
 ## Cluster management
 
-kubeconfig: ## Fetch kubeconfig from the manager to playbooks/kubeconfig.yml
-	$(ANSIBLE) provision_all.yml --limit manager --tags fetch_kubeconfig 2>/dev/null; \
-	cd $(PLAYBOOK_DIR) && ansible manager -m fetch \
-	  -a "src=/etc/rancher/k3s/k3s.yaml dest=kubeconfig.yml flat=yes" --become
+kubeconfig: ## Fetch kubeconfig from the manager to ~/.kube/config (kubectl's default)
+	($(ANSIBLE) provision_all.yml --limit manager --tags fetch_kubeconfig); \
+	mkdir -p $$HOME/.kube; \
+	if [ -f $$HOME/.kube/config ]; then cp $$HOME/.kube/config $$HOME/.kube/config.bak; fi; \
+	cp $(PLAYBOOK_DIR)/kubeconfig.yml $$HOME/.kube/config; \
+	echo "kubeconfig copied to $$HOME/.kube/config"
 
 reset: ## Tear down k3s, batman and all provisioning artifacts on all nodes
 	@printf '\033[33mThis will uninstall k3s and reset the mesh on ALL nodes. Continue? [y/N] \033[0m'; \
 	read ans; [ "$$ans" = y ] || { echo "Aborted."; exit 1; }
 	$(ANSIBLE) reset.yml $(LIMIT_FLAG)
+
+## Deployments
+
+deploy: ## Pick a k8s deployment (+ action, unless ACTION= is set) and run it. make deploy ACTION=apply|logs|delete|build|rollout
+	@shellscripts/deployctl.sh $(ACTION)

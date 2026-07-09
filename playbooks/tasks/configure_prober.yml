@@ -9,6 +9,7 @@
       - bc
     state: present
     update_cache: true
+    cache_valid_time: 3600
 
 - name: Install grpcurl
   ansible.builtin.unarchive:
@@ -42,17 +43,11 @@
 
 - name: Deploy kubeconfig
   ansible.builtin.copy:
-    content: "{{ manager_kubeconfig.content | b64decode }}"
+    content: "{{ (manager_kubeconfig.content | b64decode).replace('https://127.0.0.1:6443', 'https://' + manager_bat_ip + ':6443') }}"
     dest: /home/pi/kubeconfig
     owner: pi
     group: pi
     mode: "0600"
-
-- name: Replace localhost API endpoint
-  ansible.builtin.replace:
-    path: /home/pi/kubeconfig
-    regexp: 'https://127\.0\.0\.1:6443'
-    replace: "https://{{ manager_bat_ip }}:6443"
 
 - name: Get wlan0 MAC address
   ansible.builtin.command: cat /sys/class/net/wlan0/address

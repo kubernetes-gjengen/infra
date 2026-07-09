@@ -41,8 +41,23 @@
     owner: root
     group: root
     mode: "0644"
+  register: dnsmasq_config
 
-- name: restart dnsmasq
+# Without enabled: true this silently doesn't survive a reboot: reset.yml
+# disables dnsmasq before removing the package, and apt reinstalling it
+# later does not clear that disabled marker. A manager reboot (e.g. the
+# cgroup-triggered one during k3s server install) then leaves the whole
+# mesh's DHCP/DNS dead until someone notices and starts it by hand - every
+# worker's bat0 fails to lease an IP and can't resolve *.gotham, which is
+# exactly what stalls the k3s agent install task waiting on manager0.gotham.
+- name: Enable dnsmasq and ensure it's running
+  ansible.builtin.systemd_service:
+    name: dnsmasq
+    enabled: true
+    state: started
+
+- name: Restart dnsmasq to pick up config changes
   ansible.builtin.systemd_service:
     name: dnsmasq
     state: restarted
+  when: dnsmasq_config is changed

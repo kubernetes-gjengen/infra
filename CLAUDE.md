@@ -28,7 +28,7 @@ so no `-i` flag is needed when running from `playbooks/`.
 
 ### Inventory
 
-- `inventories/discover.py` — **dynamic inventory** (the default). ARP-scans the wired setup subnet (`192.168.3.0/24`), keeps hosts with a Raspberry Pi MAC OUI, and splits them into `manager` (first Pi 5 found, else lowest-IP Pi) and `worker` groups. Hostnames (`manager0`, `worker0`, …) are re-numbered by IP on every run — no persisted state. Requires passwordless `sudo nmap` on the provisioner.
+- `inventories/discover.py` — **dynamic inventory** (the default). ARP-scans the wired setup subnet (`192.168.3.0/24`), keeps hosts with a Raspberry Pi MAC OUI, and splits them into `manager` (first Pi 5 found, else lowest-IP Pi) and `worker` groups. Hostnames (`manager0`, `worker0`, …) are keyed by MAC and persisted in `inventories/discovered_hosts.json` (gitignored, local machine state) — a MAC keeps its name forever once assigned, even as IPs change or other Pis join/leave/reorder; only a never-before-seen MAC gets a new name. The manager role is sticky the same way (won't jump to a newly joined Pi 5) and is only re-picked if the current manager MAC goes offline. Requires passwordless `sudo nmap` on the provisioner.
 - Mesh IPs are **not** in inventory: workers lease their `bat0` address from the manager's DHCP server, and the manager's fixed `bat0` address is `manager_mesh_ip` in `group_vars/all.yml` (`192.168.42.1`).
 - `inventories/static-eth.ini` / `static-bat.ini` — legacy static inventories, kept for reference / manual runs (`-i inventories/static-eth.ini`).
 
