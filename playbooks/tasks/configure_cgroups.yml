@@ -8,18 +8,19 @@
   ansible.builtin.set_fact:
     new_cmdline: >-
       {{
-        (cmdline.content | b64decode | trim)
-        + ' '
-        + (
-          [
-            'cgroup_enable=cpuset',
-            'cgroup_enable=memory',
-            'cgroup_memory=1',
-            'systemd.unified_cgroup_hierarchy=1'
-          ]
-          | reject('in', cmdline.content | b64decode)
-          | join(' ')
-        )
+        (
+          [cmdline.content | b64decode | trim]
+          + (
+            [
+              'cgroup_enable=cpuset',
+              'cgroup_enable=memory',
+              'cgroup_memory=1',
+              'systemd.unified_cgroup_hierarchy=1'
+            ]
+            | reject('in', cmdline.content | b64decode)
+            | list
+          )
+        ) | join(' ')
       }}
 
 - name: Write updated cmdline.txt

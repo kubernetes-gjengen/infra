@@ -38,6 +38,42 @@
 #     state: present
 #   loop: "{{ groups['all'] }}"
 
+# network_prober.sh's get_neighbors() relies on batctl resolving MACs to
+# node names via /etc/bat-hosts - without it, `batctl o` prints raw MACs,
+# and the "$neighbor".gotham hostname the script builds for throughput
+# probing turns into an unresolvable "aa:bb:cc:dd:ee:ff.gotham". Every host
+# computes the same bat_hosts_content independently (rather than a
+# run_once + hostvars[] indirection) so this doesn't depend on every host
+# reaching this task in the same forks batch - relies on ansible.cfg's
+# forks being >= the fleet size so every host has already set its own
+# bat_mac fact by the time any host reads the others' via hostvars.
+- name: Get wlan0 MAC address
+  ansible.builtin.command: cat /sys/class/net/wlan0/address
+  register: wlan_mac
+  changed_when: false
+
+- name: Store BATMAN MAC
+  ansible.builtin.set_fact:
+    bat_mac: "{{ wlan_mac.stdout | trim }}"
+
+- name: Build bat-hosts content
+  ansible.builtin.set_fact:
+    bat_hosts_content: |
+      {% for host in groups['all'] %}
+      {% if hostvars[host].bat_mac is defined %}
+      {{ hostvars[host].bat_mac }} {{ host }}
+      {% endif %}
+      {% endfor %}
+
+- name: Install /etc/bat-hosts
+  ansible.builtin.copy:
+    dest: /etc/bat-hosts
+    content: "{{ bat_hosts_content }}"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart network_prober
+
 - name: Copy message.proto
   ansible.builtin.copy:
     src: files/message.proto

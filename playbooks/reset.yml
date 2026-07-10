@@ -276,7 +276,12 @@
     # tasks/detect_capabilities.yml) need no explicit teardown here - they
     # live entirely in k3s's own API state, which the k3s
     # uninstall(-agent)?.sh scripts above already wipe.
-    - name: Stop and disable network_prober, iperf3 and avahi-daemon services
+    # avahi-daemon ships preinstalled on stock Pi OS, so this playbook never
+    # stops, disables, or removes it - it isn't provisioning's to tear down.
+    # That's also what lets the final reboot play below reconnect via
+    # <hostname>.local, since eth0 reverts to plain NetworkManager DHCP as
+    # part of this reset and can come back with a different address.
+    - name: Stop and disable network_prober and iperf3 services
       ansible.builtin.systemd:
         name: "{{ item }}"
         state: stopped
@@ -284,7 +289,6 @@
       loop:
         - network_prober
         - iperf3
-        - avahi-daemon
       failed_when: false
 
     - name: Remove batman and network_prober service files
@@ -304,11 +308,11 @@
     # a provisioning feature that this playbook tears down. Does NOT
     # include iptables/systemd-resolved: both are still relied on by the
     # DNS-restore and NAT-flush tasks elsewhere in this playbook, so
-    # removing them here would fight those.
-    - name: Remove packages installed for provisioning features (mDNS, network prober, capability detection)
+    # removing them here would fight those. avahi-daemon is also excluded -
+    # see the note on the reboot play below for why.
+    - name: Remove packages installed for provisioning features (network prober, capability detection)
       ansible.builtin.apt:
         name:
-          - avahi-daemon
           - iperf3
           - jq
           - mosquitto-clients
@@ -381,7 +385,23 @@
   gather_facts: false
 
   tasks:
+    # eth0 is back on plain NetworkManager DHCP at this point, which can
+    # hand out a different address across a reboot. Reconnecting via
+    # <hostname>.local instead of the pre-reboot ansible_host means the
+    # address change doesn't matter - avahi-daemon ships preinstalled and
+    # running on stock Pi OS and this playbook never touches it (see above),
+    # so it's still there to answer for it under whatever IP it lands on.
+    # Without this, the reboot module polls the stale pre-reboot IP and
+    # times out for good the moment DHCP hands out something different.
+    - name: Reconnect over mDNS for the reboot
+      ansible.builtin.add_host:
+        name: "{{ inventory_hostname }}"
+        ansible_host: "{{ pi_hostname }}.local"
+
     - name: Reboot
       ansible.builtin.reboot:
-        reboot_timeout: 120
+        # Observed real boot time is ~130-145s across the fleet, past the old
+        # 120s timeout - every host still rebooted fine, Ansible just gave up
+        # waiting a few seconds too early.
+        reboot_timeout: 240
         post_reboot_delay: 10

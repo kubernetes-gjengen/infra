@@ -137,7 +137,7 @@ capabilities:
 
   ai-camera:
     description: "Raspberry Pi AI Camera (IMX500)"
-    become: false
+    become: true
     timeout: 15
     hosts: all
     # CONFIDENCE: medium - review before relying on this. rpicam-hello is
@@ -146,6 +146,15 @@ capabilities:
     # Pis in this cluster. Explicitly distinguishes "neither binary
     # exists / errored" (ERROR) from "binary ran fine, camera list just
     # doesn't mention imx500" (ABSENT).
+    #
+    # become: true is required, not optional: /dev/dma_heap/* (needed for
+    # rpicam-hello's buffer allocation) is root:root mode 600 - being in
+    # the video group isn't enough. As the unprivileged pi user this
+    # fails with "Could not open any dmaHeap device" -> "No cameras
+    # available!" even with a real camera attached, which the exit-code
+    # contract can't tell apart from a genuinely absent camera (both look
+    # like a clean rc=1 ABSENT). Confirmed on worker8 (has a real IMX500):
+    # rc=1/ABSENT as pi, rc=0/PRESENT as root, identical command.
     command: |
       BIN=""
       if command -v rpicam-hello >/dev/null 2>&1; then

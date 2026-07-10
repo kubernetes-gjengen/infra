@@ -31,16 +31,30 @@
   failed_when: false
   when: inventory_hostname in groups[capabilities.sensehat.hosts | default('all')]
 
-- name: Ensure ai-camera detection tooling is installed (tries both package names - naming differs by Raspberry Pi OS release)
+# rpicam-hello (the only binary the check below actually runs) lives in
+# rpicam-apps-core. The full rpicam-apps metapackage additionally pulls in
+# rpicam-apps-encoder, rpicam-apps-opencv-postprocess (OpenCV) and
+# rpicam-apps-preview (Qt5/GStreamer/X11) - none of which this detection
+# needs, but which turn a "is a camera plugged in" check into a many-
+# hundred-package install on every Pi in the fleet, camera or not.
+- name: Ensure ai-camera detection tooling is installed (rpicam-apps-core has rpicam-hello without the heavy encoder/preview/opencv deps)
   ansible.builtin.apt:
-    name: "{{ item }}"
+    name: rpicam-apps-core
     state: present
-  loop:
-    - rpicam-apps
-    - libcamera-apps
+  become: true
+  ignore_errors: true
+  register: rpicam_core_install
+  when: inventory_hostname in groups[capabilities['ai-camera'].hosts | default('all')]
+
+- name: Fall back to libcamera-apps (older Raspberry Pi OS releases don't have rpicam-apps-core)
+  ansible.builtin.apt:
+    name: libcamera-apps
+    state: present
   become: true
   failed_when: false
-  when: inventory_hostname in groups[capabilities['ai-camera'].hosts | default('all')]
+  when:
+    - inventory_hostname in groups[capabilities['ai-camera'].hosts | default('all')]
+    - rpicam_core_install is failed
 
 # Each command runs as `timeout N bash -s`, with the script text fed via
 # stdin rather than interpolated into the command line - avoids any

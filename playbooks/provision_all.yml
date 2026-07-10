@@ -19,9 +19,11 @@
     - name: Disable cloud-init
       ansible.builtin.include_tasks: tasks/disable_cloud_init.yml
 
-    # Installed before any network changes so that, once the mesh comes up and
-    # eth0 re-DHCPs, the nodes are still reachable at <hostname>.local via mDNS.
-    - name: Install avahi-daemon for .local (mDNS) resolution
+    # Ships preinstalled on stock Pi OS - this just guards against a base
+    # image that lacks it. Checked before any network changes so that, once
+    # the mesh comes up and eth0 re-DHCPs, the nodes are still reachable at
+    # <hostname>.local via mDNS.
+    - name: Ensure avahi-daemon is present for .local (mDNS) resolution
       ansible.builtin.apt:
         name: avahi-daemon
         state: present
@@ -97,8 +99,14 @@
 
     - name: Wait for connection
       ansible.builtin.wait_for_connection:
+        # A whole-fleet netplan bounce (every host flushing eth0 and
+        # re-DHCPing at once) can take longer than a single host's reconnect
+        # to settle - DHCP server handling a burst of requests, ARP caches,
+        # mDNS reconvergence. Observed spurious "No route to host" failures
+        # around 70s elapsed with 60s timeout even though every host came
+        # back fine seconds later.
         delay: 10
-        timeout: 60
+        timeout: 120
 
     - name: Reattach bat0 interface
       ansible.builtin.command: ip link set wlan0 master bat0

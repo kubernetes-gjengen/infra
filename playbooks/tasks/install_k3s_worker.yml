@@ -45,3 +45,18 @@
   args:
     executable: /bin/bash
   when: not k3s_bin.stat.exists
+  # The install script's own `systemctl start k3s-agent` can report failure
+  # even though the agent goes on to start fine seconds later -
+  # k3s-agent.service is Type=notify, and first-boot startup (image pulls,
+  # flannel/vxlan setup) can outrun that internal wait. Don't trust this
+  # exit code as final; the poll below is the real signal.
+  failed_when: false
+
+- name: Confirm k3s-agent actually came up (install script's own start-wait can time out even on eventual success)
+  ansible.builtin.command: systemctl is-active k3s-agent
+  register: k3s_agent_active
+  until: k3s_agent_active.rc == 0
+  retries: 12
+  delay: 10
+  changed_when: false
+  when: not k3s_bin.stat.exists

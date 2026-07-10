@@ -18,7 +18,7 @@ ifdef SKIP
   SKIP_FLAG := --skip-tags $(SKIP)
 endif
 
-.PHONY: help discover ping provision reset kubeconfig deploy label watch
+.PHONY: help discover ping status provision reset kubeconfig deploy label watch
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*##"; printf "\nUsage:\n  make \033[36m<target>\033[0m [LIMIT=<host>]\n\nTargets:\n"} \
@@ -32,6 +32,9 @@ discover: ## List Pis found on the LAN (dry-run, no SSH)
 
 ping: ## Ansible ping all discovered Pis
 	cd $(PLAYBOOK_DIR) && ansible all -m ping $(LIMIT_FLAG)
+
+status: ## Snapshot apt/dpkg activity on all Pis - tells a slow provision run apart from a stuck one. LIMIT=<host> for one Pi.
+	cd $(PLAYBOOK_DIR) && ansible all -b -m shell -a "echo '--- apt/dpkg processes ---'; ps aux | grep -E 'apt|dpkg' | grep -v grep; echo '--- dpkg lock holder (empty = free) ---'; fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock 2>&1 || true" $(LIMIT_FLAG)
 
 ## Provisioning
 

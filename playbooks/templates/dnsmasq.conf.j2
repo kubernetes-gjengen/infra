@@ -9,4 +9,15 @@ resolv-file=/run/systemd/resolve/resolv.conf
 dhcp-option=option:domain-search,gotham
 domain=gotham
 local=/gotham/
-expand-hosts
+
+# Workers get their <name>.gotham record for free from their DHCP lease
+# hostname. The manager never leases from its own dnsmasq (bat0 is static),
+# so without this it has no .gotham record at all - and expand-hosts (the
+# tempting alternative) would synthesize one from /etc/hosts's standard
+# "127.0.1.1 {{ pi_hostname }}" self-entry, pointing manager0.gotham at
+# loopback instead of the mesh. That silently breaks every worker's k3s
+# join (K3S_URL=https://manager0.gotham:6443 resolves to each worker's own
+# loopback, refused) and stalls the install (k3s-agent.service is
+# Type=notify, so systemctl start blocks until it can reach the server or
+# the unit's start timeout expires).
+host-record={{ pi_hostname }}.gotham,{{ pi_hostname }},{{ manager_mesh_ip }}
