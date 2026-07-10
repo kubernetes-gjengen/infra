@@ -1,0 +1,184 @@
+---
+# Capability detection config, consumed by tasks/detect_capabilities.yml
+# (included from the "Detect and label node capabilities" play in
+# provision_all.yml, tag `detect_capabilities`).
+#
+# Each entry becomes the k8s node label `capability/<key>=true` when its
+# detection command reports PRESENT on that node. Labels are add-only: a
+# capability that stops being detected on a later run is never removed.
+#
+# Detection command contract (deliberately 3-way, not pass/fail):
+#   exit 0        -> PRESENT (capability detected)
+#   exit 1        -> ABSENT  (cleanly not detected - expected, not an error)
+#   anything else -> ERROR   (the check itself broke: missing tool, bad
+#                             permissions, timeout via the `timeout`
+#                             wrapper -> rc 124, etc.) - surfaced as a
+#                             warning, node is left unlabeled for this
+#                             capability this run.
+#
+# Each command runs as its own `bash -s` script fed via stdin (not
+# string-interpolated), so it can freely use $(...), if/then, pipes, etc.
+#
+# Fields per capability:
+#   description : human-readable, shown in the ERROR warning
+#   command     : detection script honoring the exit-code contract above
+#   become      : whether the command needs root (default: false)
+#   timeout     : seconds before the check is killed and treated as ERROR
+#   hosts       : ansible inventory group to run this check on
+#                 (default: "all"; must be a real group name - it's used
+#                 as a `groups[...]` lookup key, not a pattern)
+
+capabilities:
+  gps:
+    description: "GPS receiver attached via /dev/ttyUSB0, confirmed via an actual attached device"
+    become: true
+    timeout: 20
+    hosts: all
+    # REVISION HISTORY (kept because the reasoning matters for future
+    # changes to this check):
+    #
+    # First draft checked host-level `dpkg -s gpsd` + `systemctl is-active
+    # gpsd` (mirroring shellscripts/find_gps_pi.sh). Wrong for this
+    # cluster: gps-client's actual deployment (../gps-client/dockerfile)
+    # runs its own gpsd *inside the container*, started as
+    # `gpsd -N -F /var/run/gpsd.sock /dev/ttyUSB0` - never installed or
+    # run as a host systemd service. That check would report ABSENT on
+    # every real GPS Pi. It also couldn't reach the container's gpsd over
+    # 127.0.0.1:2947 anyway, since the pod isn't hostNetworked.
+    #
+    # Second draft dropped gpsd entirely and read raw serial bytes off
+    # /dev/ttyUSB0 (the actual hostPath device gps-client mounts),
+    # guessing the 3 most common NMEA-0183 baud rates (4800 = spec
+    # default, 9600 = common module default e.g. u-blox, 38400 = higher-
+    # end/reconfigured modules) and grepping for an NMEA sentence header.
+    # Tested against worker3 (the fleet's one Pi with a GPS attached) and
+    # got garbled, largely null-byte binary data at every rate - not
+    # misaligned-baud NMEA text. Root cause turned out to be twofold:
+    #   1. /dev/ttyUSB0 was already open (`fuser` showed a live `gpsd`
+    #      process) - the already-running gps-client pod's own gpsd. Our
+    #      stty calls were reconfiguring the baud rate out from under its
+    #      live session, corrupting both reads. Re-running detection
+    #      against an already-scheduled Pi would keep doing this.
+    #   2. Even setting that aside, the raw bytes looked like a binary
+    #      protocol, not NMEA text - confirmed by testing again with the
+    #      device genuinely free (gps-client scaled to 0): still garbled
+    #      at every guessed baud rate, even though the device was
+    #      actively transmitting (not silent/undervoltage-starved this
+    #      time). A fixed NMEA-text grep can't detect that receiver on
+    #      its first (never-yet-scheduled) run, full stop.
+    #
+    # Current version (this one, verified end-to-end against real
+    # hardware in both states):
+    #   - If another process already holds the device open (`fuser`) -
+    #     that's the gps-client pod's own gpsd already confirming a live
+    #     GPS session. Trust it directly, never touch the device.
+    #     Verified on worker3 while its pod was running: fast path fires
+    #     immediately, zero interference.
+    #   - Otherwise (device free - e.g. before gps-client has ever been
+    #     scheduled there), start a throwaway `gpsd` instance ourselves
+    #     against the device (same binary and same device the container
+    #     itself uses - see gps-client/dockerfile - just an ephemeral TCP
+    #     port instead of a unix socket, so bash's /dev/tcp can query it
+    #     without needing socat/nc). gpsd does its own protocol/baud
+    #     auto-detection (NMEA, u-blox UBX, etc.), which a hand-rolled
+    #     text grep can't replicate. Kill it when done. Verified on
+    #     worker3 with gps-client scaled to 0 (kubectl scale
+    #     deployment/gpsd-client --replicas=0): gpsd bound its port on
+    #     the 2nd poll (~0.5s), and its own DEVICES response confirmed
+    #     `"path":"/dev/ttyUSB0"` - exit 0. Process and its device lock
+    #     were confirmed fully released afterwards (no stray gpsd, no
+    #     leftover fuser hold); gpsd's fixed-key SHM segments persist at
+    #     0 attachments between runs, same as they would for any gpsd
+    #     instance - not something this check leaks or grows over time.
+    #
+    # gpsd is installed as a detection *tool* only here (see
+    # detect_capabilities.yml) - never enabled/started as a systemd
+    # service, never the signal itself, only ever run transiently by
+    # this exact command and killed immediately after. That's a
+    # different thing from the first draft's mistake of treating a
+    # host-level gpsd *service's* running state as the signal.
+    command: |
+      DEV=/dev/ttyUSB0
+      if [ ! -e "$DEV" ]; then exit 1; fi
+      if ! command -v fuser >/dev/null 2>&1; then exit 2; fi
+
+      if fuser "$DEV" >/dev/null 2>&1; then
+        exit 0
+      fi
+
+      if ! command -v gpsd >/dev/null 2>&1; then exit 2; fi
+
+      PORT=12947
+      gpsd -N -n -S "$PORT" "$DEV" >/dev/null 2>&1 &
+      GPSD_PID=$!
+      cleanup() { kill "$GPSD_PID" >/dev/null 2>&1; wait "$GPSD_PID" 2>/dev/null; }
+      trap cleanup EXIT
+
+      READY=0
+      for i in $(seq 1 20); do
+        if exec 3<>"/dev/tcp/127.0.0.1/$PORT" 2>/dev/null; then
+          READY=1
+          break
+        fi
+        sleep 0.25
+      done
+      if [ "$READY" -ne 1 ]; then exit 2; fi
+
+      echo '?WATCH={"enable":true}' >&3
+      RESPONSE=$(timeout 5 cat <&3)
+      exec 3<&- 3>&-
+
+      if [ -z "$RESPONSE" ]; then exit 2; fi
+      if echo "$RESPONSE" | grep -q '"class":"DEVICES"' && echo "$RESPONSE" | grep -q '"path":"'; then
+        exit 0
+      else
+        exit 1
+      fi
+
+  ai-camera:
+    description: "Raspberry Pi AI Camera (IMX500)"
+    become: false
+    timeout: 15
+    hosts: all
+    # CONFIDENCE: medium - review before relying on this. rpicam-hello is
+    # the current (Bookworm-era) binary name; libcamera-hello is the
+    # older one - tried as a fallback since OS version may vary across
+    # Pis in this cluster. Explicitly distinguishes "neither binary
+    # exists / errored" (ERROR) from "binary ran fine, camera list just
+    # doesn't mention imx500" (ABSENT).
+    command: |
+      BIN=""
+      if command -v rpicam-hello >/dev/null 2>&1; then
+        BIN=rpicam-hello
+      elif command -v libcamera-hello >/dev/null 2>&1; then
+        BIN=libcamera-hello
+      else
+        exit 2
+      fi
+      OUT=$("$BIN" --list-cameras 2>&1)
+      RC=$?
+      if [ "$RC" -ne 0 ]; then exit 2; fi
+      echo "$OUT" | grep -qi imx500 && exit 0 || exit 1
+
+  sensehat:
+    description: "Sense HAT (ATTINY88 LED matrix @ I2C addr 0x46)"
+    become: true
+    timeout: 10
+    hosts: all
+    # CONFIDENCE: medium - review before relying on this. Requires
+    # i2c-tools (installed as a prerequisite, see detect_capabilities.yml)
+    # and /dev/i2c-1 accessible - become: true (root) sidesteps the group
+    # membership question.
+    #
+    # Scans only 0x46 (not the full bus) so it's the sole cell that can be
+    # populated in the output, making a plain substring match unambiguous.
+    # Matches both "46" (idle device) and "UU" (device claimed by a kernel
+    # driver) - confirmed on real hardware that a genuine Sense HAT shows
+    # as "UU" here because the in-kernel driver is already bound to it,
+    # not the raw hex address a first-draft check assumed.
+    command: |
+      if ! command -v i2cdetect >/dev/null 2>&1; then exit 2; fi
+      OUT=$(i2cdetect -y 1 0x46 0x46 2>&1)
+      RC=$?
+      if [ "$RC" -ne 0 ]; then exit 2; fi
+      echo "$OUT" | grep -qiE '46|UU' && exit 0 || exit 1

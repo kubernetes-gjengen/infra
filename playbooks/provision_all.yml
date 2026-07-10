@@ -214,6 +214,17 @@
         dest: "{{ playbook_dir }}/kubeconfig.yml"
       delegate_to: localhost
 
+- name: Detect and label node capabilities
+  hosts: all
+  gather_facts: false
+  tags: detect_capabilities
+  vars_files:
+    - capabilities.yml
+
+  tasks:
+    - name: Detect capabilities and label node
+      ansible.builtin.include_tasks: tasks/detect_capabilities.yml
+
 - name: Set up logs directory on all nodes
   hosts: all
   become: true

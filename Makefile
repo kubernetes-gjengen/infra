@@ -17,7 +17,7 @@ ifdef SKIP
   SKIP_FLAG := --skip-tags $(SKIP)
 endif
 
-.PHONY: help discover ping provision reset probe kubeconfig deploy
+.PHONY: help discover ping provision reset probe kubeconfig deploy label watch
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*##"; printf "\nUsage:\n  make \033[36m<target>\033[0m [LIMIT=<host>]\n\nTargets:\n"} \
@@ -52,6 +52,10 @@ kubeconfig: ## Fetch kubeconfig from the manager to ~/.kube/config (kubectl's de
 	cp $(PLAYBOOK_DIR)/kubeconfig.yml $$HOME/.kube/config; \
 	echo "kubeconfig copied to $$HOME/.kube/config"
 
+label: ## Re-detect hardware capabilities and (re)label nodes as k8s node labels. LIMIT=<host> to target one Pi.
+	$(ANSIBLE) provision_all.yml --limit manager --tags fetch_kubeconfig
+	$(ANSIBLE) provision_all.yml --tags detect_capabilities $(LIMIT_FLAG)
+
 reset: ## Tear down k3s, batman and all provisioning artifacts on all nodes
 	@printf '\033[33mThis will uninstall k3s and reset the mesh on ALL nodes. Continue? [y/N] \033[0m'; \
 	read ans; [ "$$ans" = y ] || { echo "Aborted."; exit 1; }
@@ -61,3 +65,8 @@ reset: ## Tear down k3s, batman and all provisioning artifacts on all nodes
 
 deploy: ## Pick a k8s deployment (+ action, unless ACTION= is set) and run it. make deploy ACTION=apply|logs|delete|build|rollout
 	@shellscripts/deployctl.sh $(ACTION)
+
+## Observability
+
+watch: ## Pick a live cluster view (scheduler logs, ...) and stream it. Ctrl-C to stop.
+	@shellscripts/watchctl.sh

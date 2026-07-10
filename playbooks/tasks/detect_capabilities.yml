@@ -1,0 +1,102 @@
+---
+# Expects: `capabilities` (loaded via vars_files: capabilities.yml by the
+# calling play), `pi_hostname` (from the discover.py inventory).
+
+# Detection *tooling* prerequisites. Best-effort: a package that doesn't
+# exist for a given Pi's OS release just means that capability's checks
+# report ERROR rather than silently being skipped.
+#
+# gpsd here is a detection *tool*, not the signal: the gps check runs it
+# transiently (started and killed within the single check command) only
+# to probe /dev/ttyUSB0 when nothing else already holds it open - it's
+# never enabled/started as a systemd service, and its installed/running
+# state on the host is never itself checked for anything. See the
+# REVISION HISTORY comment on the gps entry in capabilities.yml for why
+# this is different from that first-draft mistake.
+- name: Ensure gps detection tooling is installed (fuser to check for an existing holder, gpsd as a throwaway probe when the device is free)
+  ansible.builtin.apt:
+    name:
+      - psmisc
+      - gpsd
+    state: present
+  become: true
+  failed_when: false
+  when: inventory_hostname in groups[capabilities.gps.hosts | default('all')]
+
+- name: Ensure sensehat detection tooling is installed
+  ansible.builtin.apt:
+    name: i2c-tools
+    state: present
+  become: true
+  failed_when: false
+  when: inventory_hostname in groups[capabilities.sensehat.hosts | default('all')]
+
+- name: Ensure ai-camera detection tooling is installed (tries both package names - naming differs by Raspberry Pi OS release)
+  ansible.builtin.apt:
+    name: "{{ item }}"
+    state: present
+  loop:
+    - rpicam-apps
+    - libcamera-apps
+  become: true
+  failed_when: false
+  when: inventory_hostname in groups[capabilities['ai-camera'].hosts | default('all')]
+
+# Each command runs as `timeout N bash -s`, with the script text fed via
+# stdin rather than interpolated into the command line - avoids any
+# quoting/escaping hazard from the $()/if/pipe syntax the scripts use.
+- name: Run capability detection commands
+  ansible.builtin.shell:
+    cmd: "timeout {{ item.value.timeout | default(10) }} bash -s"
+    stdin: "{{ item.value.command }}"
+  become: "{{ item.value.become | default(false) }}"
+  loop: "{{ capabilities | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  when: inventory_hostname in groups[item.value.hosts | default('all')]
+  register: capability_checks
+  failed_when: false
+  changed_when: false
+
+- name: Warn about capability checks that could not be classified (broken detection command)
+  ansible.builtin.debug:
+    msg: >-
+      WARNING [{{ pi_hostname }}]: capability check '{{ item.item.key }}'
+      ({{ item.item.value.description }}) exited rc={{ item.rc | default('n/a - timed out or did not run') }},
+      expected 0 (present) or 1 (absent). Treating as ERROR, NOT labeling
+      this capability this run. stderr: {{ (item.stderr | default('')) | trim }}
+  loop: "{{ capability_checks.results }}"
+  loop_control:
+    label: "{{ item.item.key }}"
+  when: >-
+    not (item.skipped | default(false))
+    and (item.rc | default(-1)) not in [0, 1]
+
+# Runs from the controller against the freshly-fetched cluster kubeconfig
+# (playbook_dir/kubeconfig.yml, written by the "Fetch k3s config to
+# controller" play) rather than ~/.kube/config, which is populated by a
+# separate `make kubeconfig` step and may be stale/absent during this run.
+# Node name = pi_hostname: k3s registers with the OS hostname (no
+# --node-name override anywhere), and hostname is set to pi_hostname
+# earlier in this same playbook run.
+#
+# retries: right after "Install k3s agent on workers", a just-joined
+# node's kubelet may not have registered with the API server yet.
+- name: Label node for each detected (present) capability
+  ansible.builtin.command:
+    cmd: >-
+      kubectl --kubeconfig {{ playbook_dir }}/kubeconfig.yml
+      label node {{ pi_hostname }} capability/{{ item.item.key }}=true --overwrite
+  delegate_to: localhost
+  become: false
+  loop: "{{ capability_checks.results }}"
+  loop_control:
+    label: "{{ item.item.key }}"
+  when: >-
+    not (item.skipped | default(false))
+    and (item.rc | default(-1)) == 0
+  register: capability_label_result
+  until: capability_label_result.rc == 0
+  retries: 6
+  delay: 5
+  changed_when: "'not labeled' not in capability_label_result.stdout"
