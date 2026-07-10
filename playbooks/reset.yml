@@ -127,8 +127,18 @@
     # boot, and would prevent NetworkManager from managing eth0.
     - name: Remove netplan batman profile
       ansible.builtin.file:
-        path: /etc/netplan/90-netplan-batman.yaml
+        path: "{{ item }}"
         state: absent
+      loop:
+        - /etc/netplan/90-netplan-batman.yaml
+        # Pre-rename leftover: this used to be the deploy destination before
+        # it was renamed to 90-netplan-batman.yaml. Nodes provisioned before
+        # that rename still carry it, and reset never cleaned it up because
+        # it only knew the new name. Its `renderer: networkd` makes netplan's
+        # systemd generator force systemd-networkd to enabled-runtime at
+        # boot regardless of the enabled:false below, so it fights
+        # NetworkManager for eth0 and the node ends up with two DHCP leases.
+        - /etc/netplan/90-netplan-workers.yaml
 
     - name: Remove batctl and wireless-tools packages
       ansible.builtin.apt:
