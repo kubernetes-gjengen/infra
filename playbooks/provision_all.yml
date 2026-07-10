@@ -236,12 +236,21 @@
 
 - name: Configure network prober
   hosts: manager:worker
-  tags: jalla
+  tags: prober
   become: true
   gather_facts: false
 
   vars:
     manager_bat_ip: "{{ manager_mesh_ip }}"
+    grpc_host: "{{ manager_mesh_ip }}"
+    grpc_port: "30042"
+
+  handlers:
+    - name: Restart network_prober
+      ansible.builtin.systemd:
+        name: network_prober
+        daemon_reload: true
+        state: restarted
 
   tasks:
     - name: Configure network prober

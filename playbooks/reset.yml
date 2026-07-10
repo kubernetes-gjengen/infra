@@ -262,11 +262,19 @@
   gather_facts: false
 
   tasks:
-    - name: Stop and disable network_prober service
+    # Capability labels (capability/gps=true etc., set by
+    # tasks/detect_capabilities.yml) need no explicit teardown here - they
+    # live entirely in k3s's own API state, which the k3s
+    # uninstall(-agent)?.sh scripts above already wipe.
+    - name: Stop and disable network_prober, iperf3 and avahi-daemon services
       ansible.builtin.systemd:
-        name: network_prober
+        name: "{{ item }}"
         state: stopped
         enabled: false
+      loop:
+        - network_prober
+        - iperf3
+        - avahi-daemon
       failed_when: false
 
     - name: Remove batman and network_prober service files
@@ -280,6 +288,56 @@
     - name: Reload systemd daemon
       ansible.builtin.systemd:
         daemon_reload: true
+
+    # Mirrors the batctl/wireless-tools removal in the batman play and the
+    # dnsmasq removal in the DHCP/DNS play - packages installed solely for
+    # a provisioning feature that this playbook tears down. Does NOT
+    # include iptables/systemd-resolved: both are still relied on by the
+    # DNS-restore and NAT-flush tasks elsewhere in this playbook, so
+    # removing them here would fight those.
+    - name: Remove packages installed for provisioning features (mDNS, network prober, capability detection)
+      ansible.builtin.apt:
+        name:
+          - avahi-daemon
+          - iperf3
+          - jq
+          - mosquitto-clients
+          - i2c-tools
+          - rpicam-apps
+          - libcamera-apps
+          - psmisc
+          - gpsd
+        state: absent
+      failed_when: false
+
+    - name: Re-enable cloud-init
+      ansible.builtin.file:
+        path: /etc/cloud/cloud-init.disabled
+        state: absent
+
+    # blockinfile state: absent removes exactly the marked block this repo
+    # added, leaving the rest of each .bashrc untouched. Guarded in case
+    # the "Set hostname on all nodes" play never ran on a partially
+    # provisioned node.
+    - name: Remove custom PS1 prompt from /root/.bashrc
+      ansible.builtin.blockinfile:
+        path: /root/.bashrc
+        marker: "# {mark} ANSIBLE MANAGED BLOCK - custom PS1"
+        state: absent
+      failed_when: false
+
+    - name: Remove custom PS1 prompt from /home/pi/.bashrc
+      ansible.builtin.blockinfile:
+        path: /home/pi/.bashrc
+        marker: "# {mark} ANSIBLE MANAGED BLOCK - custom PS1"
+        state: absent
+      failed_when: false
+
+    - name: Remove nameserver line added for the network prober
+      ansible.builtin.lineinfile:
+        path: /etc/resolv.conf
+        line: "nameserver 1.1.1.1"
+        state: absent
 
     - name: Remove /logs directory
       ansible.builtin.file:

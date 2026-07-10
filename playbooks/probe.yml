@@ -1,101 +1,89 @@
 ---
-- name: Deploy network probe agent
-  hosts: all
-  become: true
-  gather_facts: false
+# Task list only (no hosts/become/vars/handlers) - this is loaded via
+# include_tasks from the "Configure network prober" play in
+# provision_all.yml, which supplies those. grpc_host/grpc_port and the
+# Restart network_prober handler live on that calling play.
 
-  vars:
-    grpc_host: "{{ manager_mesh_ip }}"
-    grpc_port: "30042"
+- name: Ensure nameserver is configured
+  ansible.builtin.lineinfile:
+    path: /etc/resolv.conf
+    line: "nameserver 1.1.1.1"
+    state: present
 
-  handlers:
-    - name: Restart network_prober
-      ansible.builtin.systemd:
-        name: network_prober
-        daemon_reload: true
-        state: restarted
+- name: Install iperf3 and jq and mosquitto-clients
+  ansible.builtin.apt:
+    name: [iperf3, jq, mosquitto-clients]
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
 
-  tasks:
-    - name: Ensure nameserver is configured
-      ansible.builtin.lineinfile:
-        path: /etc/resolv.conf
-        line: "nameserver 1.1.1.1"
-        state: present
+- name: Enable and start iperf3 server
+  ansible.builtin.systemd:
+    name: iperf3
+    enabled: true
+    state: started
 
-    - name: Install iperf3 and jq and mosquitto-clients
-      ansible.builtin.apt:
-        name: [iperf3, jq, mosquitto-clients]
-        state: present
-        update_cache: true
-        cache_valid_time: 3600
+- name: Install grpcurl
+  ansible.builtin.unarchive:
+    src: https://github.com/fullstorydev/grpcurl/releases/download/v1.9.3/grpcurl_1.9.3_linux_arm64.tar.gz
+    dest: /usr/local/bin
+    remote_src: true
+    creates: /usr/local/bin/grpcurl
 
-    - name: Enable and start iperf3 server
-      ansible.builtin.systemd:
-        name: iperf3
-        enabled: true
-        state: started
+# - name: Add bat0 mesh IPs to /etc/hosts
+#   ansible.builtin.lineinfile:
+#     path: /etc/hosts
+#     regexp: '\s{{ hostvars[item].inventory_hostname }}$'
+#     line: "{{ hostvars[item].assigned_ip }} {{ hostvars[item].inventory_hostname }}"
+#     state: present
+#   loop: "{{ groups['all'] }}"
 
-    - name: Install grpcurl
-      ansible.builtin.unarchive:
-        src: https://github.com/fullstorydev/grpcurl/releases/download/v1.9.3/grpcurl_1.9.3_linux_arm64.tar.gz
-        dest: /usr/local/bin
-        remote_src: true
-        creates: /usr/local/bin/grpcurl
+- name: Copy message.proto
+  ansible.builtin.copy:
+    src: files/message.proto
+    dest: /home/pi/message.proto
+    owner: pi
+    group: pi
+    mode: "0644"
+  notify: Restart network_prober
 
-    # - name: Add bat0 mesh IPs to /etc/hosts
-    #   ansible.builtin.lineinfile:
-    #     path: /etc/hosts
-    #     regexp: '\s{{ hostvars[item].inventory_hostname }}$'
-    #     line: "{{ hostvars[item].assigned_ip }} {{ hostvars[item].inventory_hostname }}"
-    #     state: present
-    #   loop: "{{ groups['all'] }}"
+- name: Copy agent script
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../shellscripts/network_prober.sh"
+    dest: /home/pi/network_prober.sh
+    owner: root
+    group: root
+    mode: "0755"
+  notify: Restart network_prober
 
-    - name: Copy message.proto
-      ansible.builtin.copy:
-        src: files/message.proto
-        dest: /home/pi/message.proto
-        owner: pi
-        group: pi
-        mode: "0644"
-      notify: Restart network_prober
+- name: Deploy systemd service
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/network_prober.service
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Batman-adv network probe agent
+      After=network.target batman.service
 
-    - name: Copy agent script
-      ansible.builtin.copy:
-        src: "{{ playbook_dir }}/../shellscripts/network_prober.sh"
-        dest: /home/pi/network_prober.sh
-        owner: root
-        group: root
-        mode: "0755"
-      notify: Restart network_prober
+      [Service]
+      ExecStart=/home/pi/network_prober.sh
+      Restart=always
+      RestartSec=10
+      # Environment="GRPC_HOST={{ grpc_host }}"
+      # Environment="GRPC_PORT={{ grpc_port }}"
+      Environment="NODE_ID={{ inventory_hostname }}"
+      Environment="BAT_IFACE=bat0"
+      Environment="PROTO_FILE=/home/pi/message.proto"
+      Environment="LATENCY_INTERVAL=5"
+      Environment="THROUGHPUT_EVERY=6"
 
-    - name: Deploy systemd service
-      ansible.builtin.copy:
-        dest: /etc/systemd/system/network_prober.service
-        mode: "0644"
-        content: |
-          [Unit]
-          Description=Batman-adv network probe agent
-          After=network.target batman.service
+      [Install]
+      WantedBy=multi-user.target
+  notify: Restart network_prober
 
-          [Service]
-          ExecStart=/home/pi/network_prober.sh
-          Restart=always
-          RestartSec=10
-          # Environment="GRPC_HOST={{ grpc_host }}"
-          # Environment="GRPC_PORT={{ grpc_port }}"
-          Environment="NODE_ID={{ inventory_hostname }}"
-          Environment="BAT_IFACE=bat0"
-          Environment="PROTO_FILE=/home/pi/message.proto"
-          Environment="LATENCY_INTERVAL=5"
-          Environment="THROUGHPUT_EVERY=6"
-
-          [Install]
-          WantedBy=multi-user.target
-      notify: Restart network_prober
-
-    - name: Enable and start network_prober
-      ansible.builtin.systemd:
-        name: network_prober
-        daemon_reload: true
-        enabled: true
-        state: started
+- name: Enable and start network_prober
+  ansible.builtin.systemd:
+    name: network_prober
+    daemon_reload: true
+    enabled: true
+    state: started

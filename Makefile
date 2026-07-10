@@ -9,7 +9,8 @@ ifdef LIMIT
   LIMIT_FLAG := --limit $(LIMIT)
 endif
 
-# Pass TAGS=jalla or SKIP=jalla as needed.
+# Pass TAGS=prober or SKIP=prober as needed. Other tags: configure_prompt,
+# fetch_kubeconfig, detect_capabilities.
 ifdef TAGS
   TAG_FLAG := --tags $(TAGS)
 endif
@@ -17,7 +18,7 @@ ifdef SKIP
   SKIP_FLAG := --skip-tags $(SKIP)
 endif
 
-.PHONY: help discover ping provision reset probe kubeconfig deploy label watch
+.PHONY: help discover ping provision reset kubeconfig deploy label watch
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*##"; printf "\nUsage:\n  make \033[36m<target>\033[0m [LIMIT=<host>]\n\nTargets:\n"} \
@@ -34,14 +35,8 @@ ping: ## Ansible ping all discovered Pis
 
 ## Provisioning
 
-provision: ## Provision (or re-verify) the cluster
+provision: ## Provision (or re-verify) the cluster. TAGS/SKIP=prober for just/without the network prober.
 	$(ANSIBLE) provision_all.yml $(LIMIT_FLAG) $(TAG_FLAG) $(SKIP_FLAG)
-
-provision-no-prober: ## Provision without deploying the network prober
-	$(ANSIBLE) provision_all.yml $(LIMIT_FLAG) --skip-tags jalla
-
-probe: ## Deploy / update the network prober on all nodes
-	$(ANSIBLE) probe.yml $(LIMIT_FLAG)
 
 ## Cluster management
 
