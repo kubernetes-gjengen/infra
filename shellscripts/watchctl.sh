@@ -64,7 +64,10 @@ scheduler)
   ssh_run "$SSH_USER@manager0.local" journalctl -u k8-scheduler.service -f
   ;;
 pods)
-  exec watch -n 2 kubectl get pods -o wide
+  # default holds the app deployments; registry holds the Zot registry
+  # (its own namespace - see registry/zot.yml) - plain `kubectl get pods`
+  # only shows default, so list both explicitly.
+  exec watch -n 2 'kubectl get pods -n default -o wide; echo; kubectl get pods -n registry -o wide'
   ;;
 nodes)
   exec watch -n 2 kubectl get nodes -o wide
