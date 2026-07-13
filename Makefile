@@ -18,7 +18,7 @@ ifdef SKIP
   SKIP_FLAG := --skip-tags $(SKIP)
 endif
 
-.PHONY: help discover ping status provision reset kubeconfig deploy label watch registry-trust
+.PHONY: help discover ping status identify provision reset kubeconfig deploy label watch registry-trust
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*##"; printf "\nUsage:\n  make \033[36m<target>\033[0m [LIMIT=<host>]\n\nTargets:\n"} \
@@ -35,6 +35,11 @@ ping: ## Ansible ping all discovered Pis
 
 status: ## Snapshot apt/dpkg activity on all Pis - tells a slow provision run apart from a stuck one. LIMIT=<host> for one Pi.
 	cd $(PLAYBOOK_DIR) && ansible all -b -m shell -a "echo '--- apt/dpkg processes ---'; ps aux | grep -E 'apt|dpkg' | grep -v grep; echo '--- dpkg lock holder (empty = free) ---'; fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock 2>&1 || true" $(LIMIT_FLAG)
+
+identify: ## Blink one Pi's ACT LED for 30s to spot it physically. Usage: make identify LIMIT=worker0
+	@if [ -z "$(LIMIT)" ]; then echo "LIMIT=<host> is required, e.g. make identify LIMIT=worker0"; exit 1; fi
+	@echo "Blinking $(LIMIT)'s ACT LED for 30s..."
+	cd $(PLAYBOOK_DIR) && ansible all -b -m shell -a 'prev=$$(grep -oP "(?<=\[).*?(?=\])" /sys/class/leds/led0/trigger); echo heartbeat > /sys/class/leds/led0/trigger; sleep 30; echo "$$prev" > /sys/class/leds/led0/trigger' $(LIMIT_FLAG)
 
 ## Provisioning
 
