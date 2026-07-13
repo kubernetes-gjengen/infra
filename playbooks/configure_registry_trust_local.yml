@@ -1,0 +1,101 @@
+---
+# Usage: ansible-playbook configure_registry_trust_local.yml (via `make registry-trust`)
+#
+# One-shot bootstrap for a laptop that wants to `docker push` to the Zot
+# registry (../registry/README.md). Does NOT generate a new CA - it fetches
+# the one already trusted by every Pi (/etc/rancher/k3s/registry-ca.crt,
+# deployed cluster-wide by tasks/configure_registry_trust.yml) from the
+# manager, so a second laptop stays in the same trust chain as the first
+# instead of minting a CA the cluster doesn't recognize.
+#
+# Also pins registry_host's hostname to the manager's current wired IP in
+# /etc/hosts, since this machine has no reason to be using the manager's
+# dnsmasq as its resolver (workers get *.gotham for free via DHCP; a
+# laptop plugged into eth0/br0 does not) - without this, pushing under
+# registry_host (the address every image reference in the cluster must
+# use, see group_vars/all.yml) would fail to even resolve.
+#
+# Safe to re-run: every step is idempotent and only touches this machine
+# (not the Pis). Same prerequisites as any other playbook here (ansible
+# installed locally, SSH key access to the Pis) - see the top-level
+# README for initial repo setup.
+
+- name: Fetch registry CA and manager's wired IP, configure this machine
+  hosts: manager
+  gather_facts: false
+
+  # Local (this machine's) sudo, for the /etc/hosts and /etc/docker|
+  # containers/certs.d writes below - deliberately NOT --ask-become-pass:
+  # that would apply globally and could stomp the manager's own
+  # (already-working, inventory-supplied) ansible_become_pass for the
+  # "Read registry CA cert from the manager" task above. Scoping the
+  # prompted password to just the delegate_to: localhost tasks via a
+  # per-task `vars:` keeps the two completely separate.
+  vars_prompt:
+    - name: local_become_pass
+      prompt: "Local sudo password (for /etc/hosts and /etc/docker/certs.d on this machine)"
+      private: true
+
+  tasks:
+    - name: Get manager's wired IP
+      ansible.builtin.shell: ip -4 addr show eth0 | grep -oP '(?<=inet )[\d.]+'
+      register: manager_wired_ip
+      changed_when: false
+
+    - name: Read registry CA cert from the manager
+      become: true
+      ansible.builtin.slurp:
+        src: /etc/rancher/k3s/registry-ca.crt
+      register: registry_ca_cert_b64
+
+    - name: Ensure ~/certs exists on this machine
+      ansible.builtin.file:
+        path: "{{ lookup('env', 'HOME') }}/certs"
+        state: directory
+        mode: "0755"
+      delegate_to: localhost
+      become: false
+
+    - name: Save registry CA cert locally (matches registry_ca_cert_path convention)
+      ansible.builtin.copy:
+        content: "{{ registry_ca_cert_b64.content | b64decode }}"
+        dest: "{{ lookup('env', 'HOME') }}/certs/registry-ca.crt"
+        mode: "0644"
+      delegate_to: localhost
+      become: false
+
+    - name: Pin registry_host to the manager's current wired IP in /etc/hosts
+      ansible.builtin.lineinfile:
+        path: /etc/hosts
+        regexp: '\s{{ registry_host.split(":")[0] }}$'
+        line: "{{ manager_wired_ip.stdout | trim }} {{ registry_host.split(':')[0] }}"
+      delegate_to: localhost
+      become: true
+      vars:
+        ansible_become_password: "{{ local_become_pass }}"
+
+    - name: Ensure Docker/Podman cert directories exist for registry_host
+      ansible.builtin.file:
+        path: "{{ item }}/{{ registry_host }}"
+        state: directory
+        mode: "0755"
+      loop:
+        - /etc/docker/certs.d
+        - /etc/containers/certs.d
+      delegate_to: localhost
+      become: true
+      vars:
+        ansible_become_password: "{{ local_become_pass }}"
+
+    - name: Trust the registry CA for docker/podman push
+      ansible.builtin.copy:
+        content: "{{ registry_ca_cert_b64.content | b64decode }}"
+        dest: "{{ item }}/{{ registry_host }}/ca.crt"
+        mode: "0644"
+      loop:
+        - /etc/docker/certs.d
+        - /etc/containers/certs.d
+      delegate_to: localhost
+      become: true
+      vars:
+        ansible_become_password: "{{ local_become_pass }}"

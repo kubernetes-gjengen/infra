@@ -18,7 +18,7 @@ ifdef SKIP
   SKIP_FLAG := --skip-tags $(SKIP)
 endif
 
-.PHONY: help discover ping status provision reset kubeconfig deploy label watch
+.PHONY: help discover ping status provision reset kubeconfig deploy label watch registry-trust
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*##"; printf "\nUsage:\n  make \033[36m<target>\033[0m [LIMIT=<host>]\n\nTargets:\n"} \
@@ -63,6 +63,11 @@ reset: ## Tear down k3s, batman and all provisioning artifacts on all nodes
 
 deploy: ## Pick a k8s deployment (+ action, unless ACTION= is set) and run it. make deploy ACTION=apply|logs|delete|build|rollout
 	@shellscripts/deployctl.sh $(ACTION)
+
+## Registry
+
+registry-trust: ## Configure THIS machine to push to the Zot registry (fetches the CA from the manager, pins its hostname, trusts it for docker/podman). See registry/README.md.
+	$(ANSIBLE) configure_registry_trust_local.yml
 
 ## Observability
 

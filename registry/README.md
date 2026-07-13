@@ -105,29 +105,35 @@ kubectl apply -f registry/zot.yml
 (`registry/zot.yml` also declares the `registry` namespace, so re-applying
 it is safe/idempotent even though you created it by hand above.)
 
-### 4. Trust the CA wherever you'll `docker push`
+### 4. Configure a laptop to `docker push` - `make registry-trust`
 
-Whatever machine you push from also needs to resolve `manager0.gotham` -
-required because you must tag/push under that exact name (see the callout
-above). If that machine already uses the manager's dnsmasq as its
-resolver (workers do automatically; your laptop only does if you've
-pointed it at `192.168.42.1`), this just works. Otherwise, pin it with a
-hosts-file entry instead of pushing under a different address:
+Every machine that pushes needs two things: to resolve `manager0.gotham`
+(required, since you must tag/push under that exact name - see the callout
+above) and to trust the CA for it. `make registry-trust` (from the repo
+root) does both in one shot:
 
 ```bash
-echo "192.168.3.18 manager0.gotham" | sudo tee -a /etc/hosts
+make registry-trust
 ```
 
-Then trust the CA for pushes:
+It fetches `registry-ca.crt` straight off the manager
+(`/etc/rancher/k3s/registry-ca.crt`, the same file every Pi already
+trusts - it does not generate a new CA, so a second laptop stays in the
+same trust chain as the first), pins `manager0.gotham` to the manager's
+current wired IP in `/etc/hosts`, and drops the CA into both
+`/etc/docker/certs.d/manager0.gotham:30500/ca.crt` and
+`/etc/containers/certs.d/manager0.gotham:30500/ca.crt` (Docker and
+Podman). Idempotent - safe to re-run any time (e.g. the manager's wired IP
+changed). It'll prompt once for this machine's local `sudo` password (not
+the Pis' - those already work via the existing inventory-supplied
+credentials), since writing `/etc/hosts` and `/etc/docker/certs.d` needs
+root here too.
 
-```bash
-sudo mkdir -p /etc/docker/certs.d/manager0.gotham:30500
-sudo cp registry-ca.crt /etc/docker/certs.d/manager0.gotham:30500/ca.crt
-```
-
-Docker picks this up without a restart in most cases; restart the daemon if
-pushes still fail with a cert error. For Podman, the equivalent path is
-`/etc/containers/certs.d/manager0.gotham:30500/ca.crt`.
+This means **a brand-new laptop never has to touch openssl or
+`registry-ca.crt` by hand** - it only needs this repo cloned, ansible
+installed, and the same SSH-key access to the Pis every other `make`
+target here requires. Docker picks the new cert up without a restart in
+most cases; restart the daemon if pushes still fail with a cert error.
 
 ### 5. Verify
 
