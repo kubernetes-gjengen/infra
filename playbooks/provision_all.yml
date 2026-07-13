@@ -189,6 +189,17 @@
     - name: Install k3s agent
       ansible.builtin.include_tasks: tasks/install_k3s_worker.yml
 
+- name: Trust the Zot registry CA in containerd
+  hosts: manager:worker
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Configure registry trust
+      ansible.builtin.include_tasks: tasks/configure_registry_trust.yml
+      vars:
+        k3s_service_name: "{{ 'k3s' if inventory_hostname in groups['manager'] else 'k3s-agent' }}"
+
 - name: Fetch k3s config to controller
   hosts: manager
   gather_facts: false

@@ -57,10 +57,11 @@ The `/28` subnet covers `.241–.254` (14 addresses); default route for all mesh
 
 ### Kubernetes / registry
 
-`registry/registry.yml` deploys a Docker registry (`registry:2`) as a K8s Deployment + NodePort service on port `30500`, backed by a 5 Gi PVC using `local-path` storage class.
+`registry/zot.yml` deploys [Zot](https://zotregistry.dev) (an OCI-native registry with a web UI + CVE scanning, chosen over Harbor because Harbor's official images are amd64-only and don't run on the Pi cluster) as a K8s Deployment + NodePort service on port `30500`, pinned to the manager node, backed by a 5 Gi PVC using `local-path` storage class. Canonical address is `manager0.gotham:30500` — every image push/reference must use that exact string, since containerd's per-node TLS trust config keys off it unnormalized. TLS is a self-signed cert (`zot-tls` k8s secret, manually created); trusting its CA in every node's containerd is automated by `tasks/configure_registry_trust.yml` (part of `provision_all.yml`, reads the CA from `registry_ca_cert_path` in `group_vars/all.yml`, a controller-local file never committed to the repo). See `registry/README.md` for full setup.
 
 ## Known manual steps (not automated)
 
 - Copy `batman.service` to `/etc/systemd/system/` on each Pi and run `sudo systemctl enable batman`.
 - Create `/home/pi/ip_addr` on each Pi containing its desired mesh IP.
 - The `network_prober.sh` expects a `message.proto` at `/home/pi/` and a running `apiserver` pod in K8s with port `50051`.
+- Zot registry TLS: generate the cert and create the `zot-tls` k8s secret — see `registry/README.md`. (Trusting the CA on every node's containerd *is* automated, unlike the other items in this list.)

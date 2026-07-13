@@ -5,3 +5,17 @@
 # (dnsmasq). Workers lease their own bat0 address from it, so the manager's
 # is the only mesh IP that must be pinned down anywhere.
 manager_mesh_ip: "192.168.42.1"
+
+# Zot registry (registry/zot.yml) trust config, consumed by
+# tasks/configure_registry_trust.yml. registry_ca_cert_path is read from the
+# *controller's* home directory - see registry/README.md for how it's
+# generated; it's never committed to the repo.
+#
+# registry_host must exactly byte-match the host:port every image reference
+# in the cluster uses (containerd's registries.yaml key isn't normalized).
+# manager0.gotham is dnsmasq's DNS name for the manager's fixed mesh IP
+# (templates/dnsmasq.conf.j2), already relied on elsewhere in this playbook
+# for the same reason (K3S_URL in tasks/install_k3s_worker.yml) - it
+# survives the manager's wired IP changing, unlike a bare IP address.
+registry_ca_cert_path: "{{ lookup('env', 'HOME') }}/certs/registry-ca.crt"
+registry_host: "manager0.gotham:30500"

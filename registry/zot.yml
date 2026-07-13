@@ -1,0 +1,119 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: registry
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: zot-config
+  namespace: registry
+data:
+  config.json: |
+    {
+      "distSpecVersion": "1.1.1",
+      "storage": {
+        "rootDirectory": "/var/lib/registry"
+      },
+      "http": {
+        "address": "0.0.0.0",
+        "port": "5000",
+        "tls": {
+          "cert": "/certs/tls.crt",
+          "key": "/certs/tls.key"
+        }
+      },
+      "log": {
+        "level": "info"
+      },
+      "extensions": {
+        "search": {
+          "enable": true,
+          "cve": {
+            "updateInterval": "24h"
+          }
+        },
+        "ui": {
+          "enable": true
+        }
+      }
+    }
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: zot-storage
+  namespace: registry
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+  storageClassName: local-path
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: zot
+  namespace: registry
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: zot
+  template:
+    metadata:
+      labels:
+        app: zot
+    spec:
+      # Keeps the zot pod (and its node-local local-path PVC) on the manager,
+      # since that's the one node every mesh member can already reach. k3s
+      # labels its server node(s) with this automatically - verify with
+      # `kubectl get nodes --show-labels` if scheduling ever gets stuck.
+      nodeSelector:
+        node-role.kubernetes.io/control-plane: "true"
+      containers:
+        - name: zot
+          image: ghcr.io/project-zot/zot:v2.1.18
+          ports:
+            - containerPort: 5000
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+          volumeMounts:
+            - name: config
+              mountPath: /etc/zot/config.json
+              subPath: config.json
+            - name: storage
+              mountPath: /var/lib/registry
+            - name: tls
+              mountPath: /certs
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: zot-config
+        - name: storage
+          persistentVolumeClaim:
+            claimName: zot-storage
+        - name: tls
+          secret:
+            # Not created by this manifest - generate the cert and create
+            # this secret first. See registry/README.md.
+            secretName: zot-tls
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: zot
+  namespace: registry
+spec:
+  type: NodePort
+  selector:
+    app: zot
+  ports:
+    - port: 5000
+      targetPort: 5000
+      nodePort: 30500

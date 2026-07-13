@@ -12,3 +12,10 @@ __pycache__/
 ./artifacts
 playbooks/kubeconfig.yml
 playbooks/inventories/discovered_hosts.json
+
+# registry TLS key material (should be generated outside the repo, but just in case)
+registry/*.key
+registry/*.crt
+registry/*.csr
+registry/*.srl
+registry/*.cnf
