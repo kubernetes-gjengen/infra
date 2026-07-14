@@ -1,0 +1,31 @@
+# Scopes *.gotham resolution for in-cluster pods to the manager's dnsmasq,
+# via its stable mesh IP (manager_mesh_ip in playbooks/group_vars/all.yml).
+#
+# Without this, CoreDNS falls back to forwarding unmatched queries to
+# /etc/resolv.conf (see k3s's default Corefile: `forward . /etc/resolv.conf`)
+# - and that file, on manager0, lists dnsmasq's loopback address alongside
+# whatever public nameservers eth0's DHCP handed out. Two problems with
+# relying on that: (1) CoreDNS runs in its own pod network namespace, not
+# hostNetwork, so "127.0.0.1" in the copied resolv.conf is CoreDNS's own
+# loopback, not manager0's; (2) even fixed, the forward plugin can pick any
+# of the listed nameservers per query, and a public resolver returning a
+# legitimate NXDOMAIN for "*.gotham" looks like a valid answer, not an
+# error - so it's not something a retry/failover would ever correct.
+#
+# The key must end in ".server" - the default Corefile
+# (see `import /etc/coredns/custom/*.server`) picks up any file here as an
+# additional server block. k3s wires this ConfigMap in automatically; no
+# other config change is needed. Requires a CoreDNS pod restart to pick up
+# (kubectl rollout restart deployment/coredns -n kube-system).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: coredns-custom
+  namespace: kube-system
+data:
+  gotham.server: |
+    gotham:53 {
+        errors
+        cache 30
+        forward . 192.168.42.1
+    }

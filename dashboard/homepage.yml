@@ -1,11 +1,43 @@
 # gethomepage/homepage - link aggregator for the cluster's frontends
-# (maviz, bapi, object-detection, sensehat-frontend) plus the Zot registry
-# UI. Public ghcr.io image (arm64), so - like mosquitto.yml - it's pulled
-# directly rather than pushed through the local Zot registry.
+# (maviz, bapi, object-detection, sensehat-frontend) plus cluster health
+# (per-node CPU/mem, per-service up/down dot via the k8s API - mode: cluster
+# in kubernetes.yaml, needs the ClusterRole below). Public ghcr.io image
+# (arm64), so - like mosquitto.yml - it's pulled directly rather than pushed
+# through the local Zot registry.
 #
 # Scheduled on capability/gui the same way maviz/bapi are, since it's just
 # another browser-facing frontend. Reachable at http://dashboard.gotham -
 # DNS record added in playbooks/templates/dnsmasq.conf.j2.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: homepage
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: homepage
+rules:
+  - apiGroups: [""]
+    resources: ["nodes", "namespaces", "pods", "services"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["nodes", "pods"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: homepage
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: homepage
+subjects:
+  - kind: ServiceAccount
+    name: homepage
+    namespace: default
+---
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -20,32 +52,54 @@ data:
         format:
           dateStyle: long
           timeStyle: short
+    - kubernetes:
+        cluster:
+          show: true
+          cpu: true
+          memory: true
+          showLabel: true
+          label: "cluster"
+        nodes:
+          show: true
+          cpu: true
+          memory: true
+          showLabel: true
   bookmarks.yaml: |
     []
+  kubernetes.yaml: |
+    mode: cluster
+  docker.yaml: |
+    # no docker host integration
+  proxmox.yaml: |
+    # no proxmox integration
+  custom.css: ""
+  custom.js: ""
   services.yaml: |
     - Frontends:
         - MAVIZ:
             href: http://manager0.gotham:30880
             description: Mesh visualization
             siteMonitor: http://manager0.gotham:30880
+            app: maviz
+            namespace: default
         - BAPI:
             href: http://manager0.gotham:30800
             description: Batman mesh API
             siteMonitor: http://manager0.gotham:30800
+            app: bapi
+            namespace: default
         - Object Detection:
             href: http://manager0.gotham:30808
             description: AI camera live viewer
             siteMonitor: http://manager0.gotham:30808
+            app: object-detection
+            namespace: default
         - Sense HAT Frontend:
             href: http://manager0.gotham:30080
             description: Sense HAT sensor dashboard
             siteMonitor: http://manager0.gotham:30080
-    - Infrastructure:
-        - Zot Registry:
-            # No siteMonitor: self-signed TLS (see registry/README.md) makes
-            # an automated health check unreliable here.
-            href: https://manager0.gotham:30500
-            description: OCI image registry + CVE scanning
+            app: sensehat-frontend
+            namespace: default
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -65,6 +119,7 @@ spec:
         capability/gui: "true"
     spec:
       schedulerName: custom-scheduler
+      serviceAccountName: homepage
       nodeSelector:
         capability/gui: "true"
       securityContext:
@@ -73,14 +128,16 @@ spec:
       containers:
         - name: homepage
           image: ghcr.io/gethomepage/homepage:latest
-          imagePullPolicy: Always
+          imagePullPolicy: IfNotPresent
           ports:
             - name: http
               containerPort: 3000
-          livenessProbe:
-            httpGet:
-              path: /api/healthcheck
-              port: http
+          env:
+            # Next.js host-header check. Must list every host:port this is
+            # reached through - dashboard.gotham (dnsmasq record) plus
+            # localhost:30100 for direct NodePort access during debugging.
+            - name: HOMEPAGE_ALLOWED_HOSTS
+              value: "dashboard.gotham,dashboard.gotham:30100,localhost:30100"
           resources:
             requests:
               cpu: "50m"
@@ -101,7 +158,30 @@ spec:
             - name: config
               mountPath: /app/config/services.yaml
               subPath: services.yaml
+            - name: config
+              mountPath: /app/config/kubernetes.yaml
+              subPath: kubernetes.yaml
+            - name: config
+              mountPath: /app/config/docker.yaml
+              subPath: docker.yaml
+            - name: config
+              mountPath: /app/config/proxmox.yaml
+              subPath: proxmox.yaml
+            - name: config
+              mountPath: /app/config/custom.css
+              subPath: custom.css
+            - name: config
+              mountPath: /app/config/custom.js
+              subPath: custom.js
+            # Newer homepage versions write logs under /app/config/logs at
+            # runtime - EACCES otherwise, since the container runs as
+            # non-root (runAsUser: 1000) and that directory doesn't exist
+            # in the image with writable permissions for that UID.
+            - name: logs
+              mountPath: /app/config/logs
       volumes:
+        - name: logs
+          emptyDir: {}
         - name: config
           configMap:
             name: homepage-config
