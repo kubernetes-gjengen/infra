@@ -70,7 +70,24 @@ pods)
   exec watch -n 2 'kubectl get pods -n default -o wide; echo; kubectl get pods -n registry -o wide'
   ;;
 nodes)
-  exec watch -n 2 kubectl get nodes -o wide
+  # Drops OS-IMAGE/KERNEL-VERSION/CONTAINER-RUNTIME (rarely useful, wide)
+  # in favor of a LABELS column - but only non-default labels (the
+  # capability/* ones from capabilities.yml), not the usual
+  # kubernetes.io/beta.kubernetes.io/node.kubernetes.io/node-role.io
+  # noise every node already carries.
+  exec watch -n 2 "kubectl get nodes -o wide --show-labels --no-headers | awk '
+    BEGIN { print \"NAME STATUS ROLES AGE VERSION INTERNAL-IP EXTERNAL-IP LABELS\" }
+    {
+      n = split(\$NF, labs, \",\")
+      out = \"\"
+      for (i = 1; i <= n; i++) {
+        if (labs[i] !~ /^(kubernetes\\.io|beta\\.kubernetes\\.io|node\\.kubernetes\\.io|node-role\\.kubernetes\\.io)\\//) {
+          out = (out == \"\" ? labs[i] : out \",\" labs[i])
+        }
+      }
+      if (out == \"\") out = \"<none>\"
+      print \$1, \$2, \$3, \$4, \$5, \$6, \$7, out
+    }' | column -t"
   ;;
 services)
   exec watch -n 2 kubectl get services -o wide
