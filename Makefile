@@ -18,7 +18,7 @@ ifdef SKIP
   SKIP_FLAG := --skip-tags $(SKIP)
 endif
 
-.PHONY: help discover ping status identify provision reset kubeconfig deploy label watch registry-trust
+.PHONY: help discover ping status identify provision reset reboot kubeconfig deploy label watch registry-trust
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*##"; printf "\nUsage:\n  make \033[36m<target>\033[0m [LIMIT=<host>]\n\nTargets:\n"} \
@@ -63,6 +63,11 @@ reset: ## Tear down k3s, batman and all provisioning artifacts on all nodes
 	@printf '\033[33mThis will uninstall k3s and reset the mesh on ALL nodes. Continue? [y/N] \033[0m'; \
 	read ans; [ "$$ans" = y ] || { echo "Aborted."; exit 1; }
 	$(ANSIBLE) reset.yml $(LIMIT_FLAG)
+
+reboot: ## Reboot all nodes (or LIMIT=<host> for one)
+	@printf '\033[33mThis will reboot ALL nodes. Continue? [y/N] \033[0m'; \
+	read ans; [ "$$ans" = y ] || { echo "Aborted."; exit 1; }
+	cd $(PLAYBOOK_DIR) && ansible all -b -m reboot $(LIMIT_FLAG)
 
 ## Deployments
 
