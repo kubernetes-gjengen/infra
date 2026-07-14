@@ -56,13 +56,35 @@
   ansible.builtin.set_fact:
     bat_mac: "{{ wlan_mac.stdout | trim }}"
 
+- name: Slurp existing bat-hosts entries
+  ansible.builtin.slurp:
+    src: /etc/bat-hosts
+  register: existing_bat_hosts
+  failed_when: false
+
+# groups['all'] only holds hosts the dynamic inventory could reach this run
+# (see inventories/discover.py) - a powered-off node is dropped entirely, not
+# just marked unreachable. Overwriting from groups['all'] alone would erase
+# its MAC->name entry every time any node is down. Merge onto whatever this
+# host already has on disk instead, so down nodes' entries survive; live
+# entries win on conflict since they're fresher than whatever's on disk.
+- name: Parse existing bat-hosts entries
+  ansible.builtin.set_fact:
+    bat_hosts_map: "{{ bat_hosts_map | default({}) | combine({(item.split(' ')[0]): item.split(' ')[1]}) }}"
+  loop: "{{ (existing_bat_hosts.content | b64decode).splitlines() if existing_bat_hosts.content is defined else [] }}"
+  when: item | trim != ''
+
+- name: Merge in bat-hosts entries known this run
+  ansible.builtin.set_fact:
+    bat_hosts_map: "{{ bat_hosts_map | default({}) | combine({hostvars[item].bat_mac: item}) }}"
+  loop: "{{ groups['all'] }}"
+  when: hostvars[item].bat_mac is defined
+
 - name: Build bat-hosts content
   ansible.builtin.set_fact:
     bat_hosts_content: |
-      {% for host in groups['all'] %}
-      {% if hostvars[host].bat_mac is defined %}
-      {{ hostvars[host].bat_mac }} {{ host }}
-      {% endif %}
+      {% for mac, host in bat_hosts_map.items() %}
+      {{ mac }} {{ host }}
       {% endfor %}
 
 - name: Install /etc/bat-hosts
