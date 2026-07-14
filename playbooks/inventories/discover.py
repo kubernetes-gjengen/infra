@@ -1,38 +1,30 @@
 #!/usr/bin/env python3
 """Ansible dynamic inventory: discover Raspberry Pis on the wired setup LAN.
 
-The cluster has no written-down inventory. On every run this script ARP-scans
-the setup subnet, keeps hosts whose MAC OUI belongs to a Raspberry Pi, and
-splits them into two groups:
-
-  * manager - exactly one node. The first Raspberry Pi 5 found (its OUI is in
-    PI5_OUIS); if there is no Pi 5, the lowest-IP Pi is promoted instead.
-    Sticky: once a MAC is manager, it stays manager across runs as long as
-    it's still on the network, even if a Pi 5 joins later.
+ARP-scans the setup subnet each run, keeps Pi-OUI hosts, splits into groups:
+  * manager - one node. Prefers a Pi 5 (PI5_OUIS), else lowest IP. Sticky:
+    stays manager across runs while online, even if a Pi 5 joins later.
   * worker  - every other Pi.
 
-Hostnames (manager0, worker0, worker1, ...) are keyed by MAC address and
-persisted across runs in STATE_PATH (discovered_hosts.json, next to this
-script). A MAC keeps its hostname forever once assigned, even if its IP
-changes or other Pis join/leave/reorder - only a MAC seen for the first time
-gets a newly minted name. This matters because k3s node identity and mDNS
-records are keyed off the hostname; renumbering it out from under an
-already-provisioned node leaves stale/duplicate state behind. Offline Pis
-keep their reserved slot (and worker-number) so it can't be reused by a
-different physical Pi later - they just don't appear in the inventory output
-until they're seen again. The state file is local, per-cluster machine
-state, not repo content - it's gitignored.
+Hostnames (manager0, worker0, ...) are keyed by MAC and persisted in
+STATE_PATH (discovered_hosts.json, gitignored, local machine state). A MAC
+keeps its name forever once assigned - k3s node identity/mDNS key off it, so
+renumbering would leave stale state. Offline Pis keep their slot so it can't
+be reused by another physical Pi; they just drop out of the output till seen
+again.
 
-Mesh IPs are deliberately NOT set here. Workers lease their bat0 address from
-the manager's DHCP server (dnsmasq), and the manager's fixed bat0 address lives
-in group_vars/all.yml as `manager_mesh_ip`. The only address this script deals
-with is the wired setup IP used to SSH in (ansible_host).
+Mesh IPs aren't set here - workers DHCP-lease bat0 from the manager, whose
+fixed bat0 IP is `manager_mesh_ip` in group_vars/all.yml. Only the wired
+setup IP (ansible_host) is handled here.
 
-Usage (invoked by Ansible):
-    discover.py --list
-    discover.py --host <name>
+A Pi that misses the wired scan but was previously assigned isn't dropped as
+long as the manager is still wired: it's reached over the mesh instead via
+`ssh -W`, proxied through the manager. ansible_host becomes `<name>.gotham` -
+the manager resolves that name itself, so this script never needs the node's
+DHCP-leased bat0 address.
 
-Requires passwordless `sudo nmap` on the provisioner (ARP scanning needs root).
+Usage (invoked by Ansible): discover.py --list / discover.py --host <name>
+Requires passwordless `sudo nmap` on the provisioner.
 """
 import argparse
 import json
@@ -68,10 +60,8 @@ def load_assignments():
 
 
 def save_assignments(assignments):
-    """Persist MAC -> hostname assignments. Best-effort: a write failure
-    (e.g. read-only filesystem) shouldn't break inventory generation, it
-    just means names may be re-derived next run instead of staying pinned.
-    """
+    """Persist MAC -> hostname assignments. Best-effort: write failure
+    shouldn't break inventory generation, just means names may re-derive."""
     try:
         with open(STATE_PATH, "w") as f:
             json.dump(assignments, f, indent=2, sort_keys=True)
@@ -94,23 +84,19 @@ def assign_hostnames(pis, assignments):
     if old_manager_mac in live_macs:
         manager_mac = old_manager_mac
     else:
-        # No manager yet, or the old one is offline - pick a new one with
-        # the original rule (prefer Pi 5, else lowest IP) among live Pis.
+        # No manager, or old one offline - pick new one (prefer Pi 5, else lowest IP).
         manager_mac = next(
             (mac for _, mac in pis if mac.startswith(PI5_OUIS)),
             pis[0][1] if pis else None,
         )
         if old_manager_mac is not None:
-            # Free its slot rather than leaving two MACs pointing at
-            # "manager0" - if it comes back it'll be treated as a new,
-            # unnamed Pi and given the next free workerN.
+            # Free the slot; old manager gets a fresh workerN if it returns.
             del assignments[old_manager_mac]
 
     if manager_mac is not None:
         assignments[manager_mac] = "manager0"
 
-    # Never reuse a workerN that's already claimed, even by a currently
-    # offline Pi - each physical Pi keeps its number for good.
+    # Never reuse a claimed workerN, even from an offline Pi - numbers stick for good.
     used_worker_ns = {
         int(name[len("worker") :])
         for name in assignments.values()
@@ -157,10 +143,8 @@ def scan_pis():
         if not (ip and mac and mac.startswith(PI_OUIS)):
             continue
         ip_key = tuple(int(octet) for octet in ip.split("."))
-        # A Pi can answer ARP on more than one IP at once (e.g. a stale DHCP
-        # lease that never got released alongside a fresh one). Collapse to
-        # one entry per MAC so it isn't counted as two separate nodes; keep
-        # the lowest IP for determinism.
+        # A Pi can answer ARP on >1 IP (stale + fresh DHCP lease). Collapse
+        # to one entry per MAC, keeping the lowest IP for determinism.
         existing = by_mac.get(mac)
         if existing is not None:
             kept = ip if ip_key < existing[0] else existing[1]
@@ -177,6 +161,20 @@ def scan_pis():
     return pis
 
 
+def mesh_proxy_ssh_args(manager_wired_ip):
+    """ansible_ssh_common_args that tunnel through the manager's wired IP.
+
+    Password auth (SSH_PASSWORD) has to be supplied a second time here for
+    the jump hop itself - ansible_password only covers the final leg, and
+    there's no key-based auth set up on these Pis to fall back on.
+    """
+    return (
+        "-o StrictHostKeyChecking=no "
+        "-o ProxyCommand=\"sshpass -p {password} ssh -o StrictHostKeyChecking=no "
+        "-o UserKnownHostsFile=/dev/null -W %h:%p {user}@{manager_ip}\""
+    ).format(password=SSH_PASSWORD, user=SSH_USER, manager_ip=manager_wired_ip)
+
+
 def build_inventory():
     """Turn the scan result into an Ansible JSON inventory."""
     pis = scan_pis()
@@ -190,18 +188,40 @@ def build_inventory():
         "_meta": {"hostvars": {}},
     }
 
-    for ip, mac in pis:
-        name = assignments[mac]
+    wired_ip_by_mac = {mac: ip for ip, mac in pis}
+    manager_mac = next(
+        (mac for mac, name in assignments.items() if name == "manager0"), None
+    )
+    manager_wired_ip = wired_ip_by_mac.get(manager_mac)
+
+    for mac, name in sorted(assignments.items(), key=lambda item: item[1]):
+        wired_ip = wired_ip_by_mac.get(mac)
+
+        if wired_ip is not None:
+            hostvars = {
+                "ansible_host": wired_ip,
+                "ansible_user": SSH_USER,
+                "ansible_password": SSH_PASSWORD,
+                "ansible_become_pass": SSH_PASSWORD,
+                "pi_hostname": name,
+            }
+        elif manager_wired_ip is not None and mac != manager_mac:
+            # Off wired LAN, manager up - reach over mesh, proxied through manager.
+            hostvars = {
+                "ansible_host": f"{name}.gotham",
+                "ansible_user": SSH_USER,
+                "ansible_password": SSH_PASSWORD,
+                "ansible_become_pass": SSH_PASSWORD,
+                "ansible_ssh_common_args": mesh_proxy_ssh_args(manager_wired_ip),
+                "pi_hostname": name,
+            }
+        else:
+            # No wired IP, no manager to proxy through - stays out of inventory.
+            continue
+
         group = "manager" if name == "manager0" else "worker"
         inventory[group]["hosts"].append(name)
-
-        inventory["_meta"]["hostvars"][name] = {
-            "ansible_host": ip,
-            "ansible_user": SSH_USER,
-            "ansible_password": SSH_PASSWORD,
-            "ansible_become_pass": SSH_PASSWORD,
-            "pi_hostname": name,
-        }
+        inventory["_meta"]["hostvars"][name] = hostvars
 
     return inventory
 
