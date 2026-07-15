@@ -1,0 +1,65 @@
+---
+- name: Deploy k8-scheduler
+  hosts: manager
+  become: true
+  gather_facts: false
+
+  handlers:
+    - name: Restart k8-scheduler
+      ansible.builtin.systemd:
+        name: k8-scheduler
+        daemon_reload: true
+        state: restarted
+
+  tasks:
+    - name: Ensure scheduler directory exists
+      ansible.builtin.file:
+        path: /home/pi/k8-scheduler
+        state: directory
+        owner: pi
+        group: pi
+        mode: "0755"
+
+    - name: Copy scheduler binary
+      ansible.builtin.copy:
+        src: files/k8-scheduler
+        dest: /home/pi/k8-scheduler/k8-scheduler
+        owner: pi
+        group: pi
+        mode: "0755"
+      notify: Restart k8-scheduler
+
+    - name: Copy scheduler config
+      ansible.builtin.copy:
+        src: "{{ scheduler_dir }}/k8_scheduler/common/config.yaml"
+        dest: /home/pi/k8-scheduler/config.yaml
+        owner: pi
+        group: pi
+        mode: "0644"
+      notify: Restart k8-scheduler
+
+    - name: Deploy systemd unit
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/k8-scheduler.service
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=Custom k8s scheduler
+          After=network.target k3s.service
+
+          [Service]
+          WorkingDirectory=/home/pi/k8-scheduler
+          ExecStart=/home/pi/k8-scheduler/k8-scheduler /etc/rancher/k3s/k3s.yaml /home/pi/k8-scheduler/config.yaml
+          Restart=always
+          RestartSec=10
+
+          [Install]
+          WantedBy=multi-user.target
+      notify: Restart k8-scheduler
+
+    - name: Enable and start k8-scheduler
+      ansible.builtin.systemd:
+        name: k8-scheduler
+        daemon_reload: true
+        enabled: true
+        state: started

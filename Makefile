@@ -4,6 +4,10 @@
 PLAYBOOK_DIR := playbooks
 ANSIBLE      := cd $(PLAYBOOK_DIR) && ansible-playbook
 
+# Sibling checkout of the scheduler repo; override if yours lives elsewhere.
+SCHEDULER_DIR ?= $(abspath $(CURDIR)/../scheduler)
+SCHEDULER_BIN := $(CURDIR)/$(PLAYBOOK_DIR)/files/k8-scheduler
+
 # Pass LIMIT=worker0 to restrict a run to one host.
 ifdef LIMIT
   LIMIT_FLAG := --limit $(LIMIT)
@@ -18,7 +22,7 @@ ifdef SKIP
   SKIP_FLAG := --skip-tags $(SKIP)
 endif
 
-.PHONY: help discover ping status identify provision reset reboot kubeconfig deploy label watch registry-trust
+.PHONY: help discover ping status identify provision reset reboot kubeconfig deploy label watch registry-trust deploy-scheduler
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*##"; printf "\nUsage:\n  make \033[36m<target>\033[0m [LIMIT=<host>]\n\nTargets:\n"} \
@@ -73,6 +77,10 @@ reboot: ## Reboot all nodes (or LIMIT=<host> for one)
 
 deploy: ## Pick a k8s deployment (+ action, unless ACTION= is set) and run it. make deploy ACTION=apply|logs|delete|build|rollout
 	@shellscripts/deployctl.sh $(ACTION)
+
+deploy-scheduler: ## Build the k8-scheduler binary and deploy it to manager0 (creates the systemd service if missing)
+	cd $(SCHEDULER_DIR)/k8_scheduler && GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o $(SCHEDULER_BIN) .
+	$(ANSIBLE) deploy_scheduler.yml -e scheduler_dir=$(SCHEDULER_DIR)
 
 ## Registry
 
