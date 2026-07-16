@@ -4,8 +4,9 @@ set -uo pipefail
 # Interactive picker for Kubernetes deployments across this repo and its
 # sibling repos (../*  relative to this script's location, i.e. ~/repos/ffi).
 #
-# A "deployment" is any file containing `kind: Deployment` that grep can
-# find. If the owning repo has a Makefile with a target matching the chosen
+# A "deployment" is any file containing `kind: Deployment` or
+# `kind: DaemonSet` that grep can find. If the owning repo has a Makefile
+# with a target matching the chosen
 # action (apply/logs/delete/build/rollout), that's used - most deployments
 # already have one (see object-detection/Makefile, gps-client/Makefile for
 # the convention). Otherwise falls back to a direct kubectl equivalent for
@@ -49,7 +50,7 @@ fi
 
 # --- Discover deployments -------------------------------------------------
 # One row per (repo, manifest file) pair:
-#   DISPLAY \t REPO_DIR \t MAKEFILE(or empty) \t MANIFEST_FILE \t DEPLOYMENT_NAME
+#   DISPLAY \t REPO_DIR \t MAKEFILE(or empty) \t MANIFEST_FILE \t DEPLOYMENT_NAME \t KIND
 
 candidates=("$INFRA_ROOT")
 for d in "$SIBLINGS_ROOT"/*/; do
@@ -67,7 +68,7 @@ for repo in "${candidates[@]}"; do
   # /templates/ excludes Helm chart templates - they use Go template syntax
   # (e.g. {{ .Release.Name }}) instead of literal values, so they're not
   # directly kubectl-applyable and need `helm template`/`helm install`.
-  mapfile -t manifests < <(grep -rl "^kind: Deployment" \
+  mapfile -t manifests < <(grep -rlE "^kind: (Deployment|DaemonSet)" \
     --include="*.yml" --include="*.yaml" "$repo" 2>/dev/null |
     grep -v -e '/\.git/' -e '/node_modules/' -e '/templates/')
 
@@ -76,23 +77,29 @@ for repo in "${candidates[@]}"; do
   [ "${#manifests[@]}" -gt 1 ] && multi=1
 
   for m in "${manifests[@]}"; do
-    # A file can hold more than one `kind: Deployment` block (e.g. an app
-    # plus a supporting service like a message broker). Prefer the one whose
-    # name matches the repo, else take the first one found.
-    mapfile -t dep_names < <(awk '
-      /^kind: Deployment/ { f=1; next }
+    # A file can hold more than one `kind: Deployment`/`kind: DaemonSet`
+    # block (e.g. an app plus a supporting service like a message broker).
+    # Prefer the one whose name matches the repo, else take the first one
+    # found.
+    mapfile -t dep_entries < <(awk '
+      /^kind: (Deployment|DaemonSet)/ { k=$2; f=1; next }
       f && /^[[:space:]]+name:[[:space:]]*/ {
         sub(/^[[:space:]]+name:[[:space:]]*/, "")
-        print
+        print k "\t" $0
         f=0
       }
     ' "$m")
 
-    dep_name=""
-    for n in "${dep_names[@]}"; do
-      [ "$n" = "$repo_name" ] && dep_name="$n" && break
+    dep_name="" kind=""
+    for e in "${dep_entries[@]}"; do
+      n="${e#*$'\t'}"
+      [ "$n" = "$repo_name" ] && dep_name="$n" && kind="${e%%$'\t'*}" && break
     done
-    [ -z "$dep_name" ] && dep_name="${dep_names[0]:-$repo_name}"
+    if [ -z "$dep_name" ]; then
+      dep_name="${dep_entries[0]#*$'\t'}"
+      kind="${dep_entries[0]%%$'\t'*}"
+      [ -z "$dep_name" ] && dep_name="$repo_name"
+    fi
 
     if [ "$multi" -eq 1 ]; then
       display="$repo_name/$(basename "${m%.*}")"
@@ -100,7 +107,7 @@ for repo in "${candidates[@]}"; do
       display="$repo_name"
     fi
 
-    rows+=("$display"$'\t'"$repo"$'\t'"$makefile"$'\t'"$m"$'\t'"$dep_name")
+    rows+=("$display"$'\t'"$repo"$'\t'"$makefile"$'\t'"$m"$'\t'"$dep_name"$'\t'"$kind")
   done
 done
 
@@ -117,7 +124,8 @@ selection=$(printf '%s\n' "${rows[@]}" | fzf \
   --preview='cat {4}' --preview-window=right:60%) || exit 0
 [ -z "$selection" ] && exit 0
 
-IFS=$'\t' read -r disp repo_dir makefile manifest dep_name <<<"$selection"
+IFS=$'\t' read -r disp repo_dir makefile manifest dep_name kind <<<"$selection"
+kind_lc="$(printf '%s' "$kind" | tr '[:upper:]' '[:lower:]')"
 
 # --- Pick the action, if not given on the command line ---------------------
 
@@ -152,10 +160,10 @@ apply)
   exec kubectl apply -f "$manifest"
   ;;
 logs)
-  exec kubectl logs -f "deployment/$dep_name"
+  exec kubectl logs -f "$kind_lc/$dep_name"
   ;;
 rollout)
-  exec kubectl rollout restart "deployment/$dep_name"
+  exec kubectl rollout restart "$kind_lc/$dep_name"
   ;;
 delete)
   exec kubectl delete -f "$manifest"

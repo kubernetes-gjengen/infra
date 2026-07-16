@@ -30,7 +30,7 @@
 
 capabilities:
   gps:
-    description: "GPS receiver attached via /dev/ttyUSB0, confirmed via an actual attached device"
+    description: "GPS receiver attached via the host's normalized /dev/gps0 symlink (USB dongle or Dragino LoRa/GPS HAT UART), confirmed via an actual attached device"
     become: true
     timeout: 20
     hosts: all
@@ -97,8 +97,23 @@ capabilities:
     # this exact command and killed immediately after. That's a
     # different thing from the first draft's mistake of treating a
     # host-level gpsd *service's* running state as the signal.
+    #
+    # 2026-07-16: DEV changed from the hardcoded /dev/ttyUSB0 to
+    # /dev/gps0 - the fleet gained worker6/worker7, each with a Dragino
+    # LoRa/GPS HAT whose GPS module is on the primary UART (/dev/ttyAMA0),
+    # not USB. tasks/configure_gps_device_symlink.yml now installs a udev
+    # rule on every worker (not just known GPS-equipped ones - there's no
+    # per-host "this Pi has a HAT" declaration anywhere in this repo) that
+    # symlinks whichever real device backs GPS on that host to /dev/gps0,
+    # so this check - and gps-client's own gpsd invocation, see
+    # ../gps-client/dockerfile - only ever needs to know about the one
+    # normalized path. tasks/configure_gps_uart.yml likewise enables UART +
+    # disables Bluetooth fleet-wide, harmless on a Pi with nothing wired to
+    # GPIO14/15, so hardware presence alone (not configuration) decides
+    # which hosts end up with a working /dev/gps0. The method below
+    # (fuser-trust, then throwaway gpsd probe) is unchanged.
     command: |
-      DEV=/dev/ttyUSB0
+      DEV=/dev/gps0
       if [ ! -e "$DEV" ]; then exit 1; fi
       if ! command -v fuser >/dev/null 2>&1; then exit 2; fi
 

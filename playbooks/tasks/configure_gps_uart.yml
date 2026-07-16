@@ -1,0 +1,95 @@
+---
+# Included unconditionally for every worker (see provision_all.yml) - there's
+# no declaration of which Pi has a GPS HAT attached. Enabling UART and
+# disabling Bluetooth is harmless on a Pi with nothing wired to GPIO14/15 (no
+# other host in this fleet uses Bluetooth for anything), so applying this
+# fleet-wide lets hardware presence alone decide the outcome: the udev rule
+# in configure_gps_device_symlink.yml only ever creates /dev/gps0 if a real
+# device (USB dongle or this UART) actually shows up, and the existing gps
+# capability check (capabilities.yml) only ever looks for /dev/gps0. No
+# per-host GPS hardware config exists anywhere in this repo.
+#
+# Background: a Dragino LoRa/GPS HAT's GPS module talks NMEA-0183 over the
+# Pi's primary PL011 UART on GPIO14/15 - separate from the HAT's LoRa radio,
+# which is on SPI and isn't touched here. On boards with onboard Bluetooth
+# (Pi 3, Zero W, Zero 2 W, CM3+, Pi 4), that chip owns the PL011 UART by
+# default, leaving only the mini-UART (clock tied to the VPU frequency,
+# unreliable for a fixed-baud GPS) on the header - so BT must be disabled to
+# free the PL011 UART for the GPS module. `disable-bt` (not the older
+# `pi3-disable-bt` alias) is the current generic overlay name and applies
+# correctly across this fleet's mixed Pi models; on a board with no onboard
+# Bluetooth device tree node, the overlay is silently skipped by the
+# bootloader (not fatal).
+
+- name: Ensure UART hardware is enabled in config.txt
+  ansible.builtin.lineinfile:
+    path: /boot/firmware/config.txt
+    regexp: '^#?\s*enable_uart='
+    line: enable_uart=1
+  register: config_txt_uart
+
+- name: Remove the older pi3-specific disable-bt overlay alias if present
+  ansible.builtin.lineinfile:
+    path: /boot/firmware/config.txt
+    regexp: '^#?\s*dtoverlay=pi3-disable-bt'
+    state: absent
+  register: config_txt_bt_legacy
+
+- name: Ensure Bluetooth is disabled to free the PL011 UART for the GPS module
+  ansible.builtin.lineinfile:
+    path: /boot/firmware/config.txt
+    regexp: '^#?\s*dtoverlay=disable-bt'
+    line: dtoverlay=disable-bt
+  register: config_txt_bt
+
+# cmdline.txt is a single space-separated line - reuse the same
+# slurp/set_fact/copy idiom as tasks/configure_cgroups.yml, removing (not
+# adding) the serial-console token so nothing else contends for the UART.
+- name: Read cmdline.txt
+  ansible.builtin.slurp:
+    path: /boot/firmware/cmdline.txt
+  register: cmdline
+
+- name: Strip serial console token so the port is free for the GPS module
+  ansible.builtin.set_fact:
+    new_cmdline: >-
+      {{
+        (cmdline.content | b64decode | trim).split(' ')
+        | reject('match', '^console=serial0,')
+        | join(' ')
+      }}
+
+- name: Write updated cmdline.txt
+  ansible.builtin.copy:
+    dest: /boot/firmware/cmdline.txt
+    content: "{{ new_cmdline }}\n"
+    mode: "0644"
+  when: new_cmdline != (cmdline.content | b64decode | trim)
+  register: cmdline_txt_uart
+
+- name: Free ttyAMA0 from the Bluetooth UART helper
+  ansible.builtin.systemd:
+    name: hciuart.service
+    enabled: false
+    state: stopped
+  register: hciuart_service
+  # Best-effort: the disable-bt overlay above already removes the BT chip's
+  # UART wiring at the device-tree level, so nothing attaches to ttyAMA0 on
+  # boot regardless of this unit. Some Raspberry Pi OS images (this fleet's
+  # included) don't ship hciuart.service at all - only bluetooth.service -
+  # so tolerate "unit not found" rather than treat it as fatal.
+  failed_when: false
+
+# Exposed so the caller can gate the (otherwise unconditional) reboot on an
+# actual change - a reboot is only needed when config.txt/cmdline.txt were
+# rewritten (mirrors configure_cgroups.yml's cgroups_changed fact).
+- name: Record whether UART settings changed
+  ansible.builtin.set_fact:
+    uart_changed: >-
+      {{
+        (config_txt_uart is changed)
+        or (config_txt_bt_legacy is changed)
+        or (config_txt_bt is changed)
+        or (cmdline_txt_uart is changed)
+        or (hciuart_service is changed)
+      }}

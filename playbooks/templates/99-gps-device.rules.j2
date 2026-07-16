@@ -1,0 +1,9 @@
+# Managed by ansible (playbooks/templates/99-gps-device.rules.j2).
+# Normalizes whichever real GPS serial device this host has (USB dongle or
+# Dragino LoRa/GPS HAT onboard UART) to a single stable name, so
+# gps-client's DaemonSet can mount one hostPath fleet-wide regardless of
+# per-host hardware. Applied identically to every worker - whichever line
+# matches an actual device on this host wins; if neither is present, no
+# /dev/gps0 is created and this host simply won't be detected as GPS-capable.
+SUBSYSTEM=="tty", KERNEL=="ttyUSB0", SYMLINK+="gps0"
+SUBSYSTEM=="tty", KERNEL=="ttyAMA0", SYMLINK+="gps0"

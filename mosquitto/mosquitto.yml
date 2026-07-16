@@ -27,6 +27,7 @@ spec:
       labels:
         app: mosquitto
     spec:
+      schedulerName: custom-scheduler
       containers:
         - name: mosquitto
           image: eclipse-mosquitto:2

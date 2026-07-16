@@ -14,7 +14,7 @@ ifdef LIMIT
 endif
 
 # Pass TAGS=prober or SKIP=prober as needed. Other tags: configure_prompt,
-# fetch_kubeconfig, detect_capabilities.
+# fetch_kubeconfig, detect_capabilities, gps_hat.
 ifdef TAGS
   TAG_FLAG := --tags $(TAGS)
 endif
@@ -22,7 +22,7 @@ ifdef SKIP
   SKIP_FLAG := --skip-tags $(SKIP)
 endif
 
-.PHONY: help discover ping status identify provision reset reboot kubeconfig deploy label watch registry-trust deploy-scheduler
+.PHONY: help discover ping status identify provision reset reboot kubeconfig kubeconfig-copy deploy label watch registry-trust deploy-scheduler
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*##"; printf "\nUsage:\n  make \033[36m<target>\033[0m [LIMIT=<host>]\n\nTargets:\n"} \
@@ -59,7 +59,14 @@ kubeconfig: ## Fetch kubeconfig from the manager to ~/.kube/config (kubectl's de
 	cp $(PLAYBOOK_DIR)/kubeconfig.yml $$HOME/.kube/config; \
 	echo "kubeconfig copied to $$HOME/.kube/config"
 
-label: ## Re-detect hardware capabilities and (re)label nodes as k8s node labels. LIMIT=<host> to target one Pi.
+kubeconfig-copy: ## Copy kubeconfig from manager0 to another Pi's /home/pi/.kube/config. Usage: make kubeconfig-copy HOST=worker0
+	@if [ -z "$(HOST)" ]; then echo "HOST=<name> is required, e.g. make kubeconfig-copy HOST=worker0"; exit 1; fi
+	$(ANSIBLE) provision_all.yml --limit manager --tags fetch_kubeconfig
+	cd $(PLAYBOOK_DIR) && ansible $(HOST) -b -m ansible.builtin.file -a "path=/home/pi/.kube state=directory owner=pi group=pi mode=0700"
+	cd $(PLAYBOOK_DIR) && ansible $(HOST) -b -m ansible.builtin.copy -a "src=kubeconfig.yml dest=/home/pi/.kube/config owner=pi group=pi mode=0600"
+	@echo "kubeconfig copied to $(HOST):/home/pi/.kube/config"
+
+label: ## Re-detect hardware capabilities and (re)label nodes as k8s node labels. LIMIT=<host> to target one Pi. First-time GPS hardware setup (UART/udev) needs a prior `make provision` (or TAGS=gps_hat) - this target only re-detects/relabels.
 	$(ANSIBLE) provision_all.yml --limit manager --tags fetch_kubeconfig
 	$(ANSIBLE) provision_all.yml --tags detect_capabilities $(LIMIT_FLAG)
 

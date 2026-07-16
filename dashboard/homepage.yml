@@ -133,11 +133,11 @@ spec:
             - name: http
               containerPort: 3000
           env:
-            # Next.js host-header check. Must list every host:port this is
-            # reached through - dashboard.gotham (dnsmasq record) plus
-            # localhost:30100 for direct NodePort access during debugging.
+            # Next.js host-header check. Wildcard - reached via multiple
+            # hosts (dashboard.gotham, NodePort on any node IP, localhost)
+            # and per-host allowlist kept breaking access.
             - name: HOMEPAGE_ALLOWED_HOSTS
-              value: "dashboard.gotham,dashboard.gotham:30100,localhost:30100"
+              value: "*"
           resources:
             requests:
               cpu: "50m"

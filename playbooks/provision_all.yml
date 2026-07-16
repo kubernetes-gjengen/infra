@@ -155,6 +155,14 @@
     - name: Configure cgroups
       ansible.builtin.include_tasks: tasks/configure_cgroups.yml
 
+    # Applied to every worker, not just ones known to have a GPS HAT - see
+    # tasks/configure_gps_uart.yml for why this is safe/harmless on Pis with
+    # nothing wired to GPIO14/15, and how that keeps GPS detection fully
+    # automatic (no per-host "this Pi has a HAT" declaration anywhere).
+    - name: Configure UART for GPS (Dragino HAT support)
+      ansible.builtin.include_tasks: tasks/configure_gps_uart.yml
+      tags: gps_hat
+
 - name: Fetch k3s join token from manager
   hosts: manager
   become: true
@@ -166,19 +174,33 @@
       register: k3s_join_token
       changed_when: false
 
-- name: Reboot workers to apply cgroup settings
+- name: Reboot workers to apply cgroup/UART settings
   hosts: worker
   become: true
   gather_facts: false
+  # Untagged so a full provision run always includes it (cgroups needs this
+  # regardless); also tagged gps_hat so `TAGS=gps_hat` alone - without a full
+  # provision - still reboots hosts whose UART config actually changed.
+  tags: [always, gps_hat]
 
   tasks:
-    # Only reboot nodes whose cmdline.txt was actually rewritten - already
-    # provisioned workers keep running untouched.
+    # Only reboot nodes whose cmdline.txt/config.txt was actually rewritten -
+    # already provisioned workers keep running untouched.
     - name: Reboot
       ansible.builtin.reboot:
         reboot_timeout: 120
         post_reboot_delay: 60
-      when: cgroups_changed | default(false)
+      when: (cgroups_changed | default(false)) or (uart_changed | default(false))
+
+- name: Configure stable GPS device symlink
+  hosts: worker
+  become: true
+  gather_facts: false
+  tags: gps_hat
+
+  tasks:
+    - name: Configure GPS device symlink
+      ansible.builtin.include_tasks: tasks/configure_gps_device_symlink.yml
 
 - name: Install k3s agent on workers
   hosts: worker
