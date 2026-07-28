@@ -22,7 +22,7 @@ ifdef SKIP
   SKIP_FLAG := --skip-tags $(SKIP)
 endif
 
-.PHONY: help discover ping status identify provision reset reboot kubeconfig kubeconfig-copy deploy label watch registry-trust deploy-scheduler
+.PHONY: help discover discover-model ping status identify provision reset reboot kubeconfig kubeconfig-copy deploy label watch registry-trust deploy-scheduler
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*##"; printf "\nUsage:\n  make \033[36m<target>\033[0m [LIMIT=<host>]\n\nTargets:\n"} \
@@ -33,6 +33,9 @@ help: ## Show this help
 
 discover: ## List Pis found on the LAN (dry-run, no SSH)
 	cd $(PLAYBOOK_DIR) && python3 inventories/discover.py --list
+
+discover-model: ## List Pis with their Pi model (SSHes into each, manual use only)
+	cd $(PLAYBOOK_DIR) && python3 inventories/discover.py --model
 
 ping: ## Ansible ping all discovered Pis
 	cd $(PLAYBOOK_DIR) && ansible all -m ping $(LIMIT_FLAG)

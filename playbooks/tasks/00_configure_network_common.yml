@@ -102,3 +102,17 @@
     mode: "0600"
   register: netplan_cfg
 
+# manager0.gotham is used by both containerd (image pulls from Zot) and the
+# k3s agent (join URL). It resolves via bat0 DHCP → dnsmasq, but bat0 comes
+# up after eth0 and there is a startup race: containerd may attempt its first
+# pull before systemd-resolved has bat0's DNS configured, getting EAI_AGAIN.
+# /etc/hosts has no dependency on interface state, so this entry wins
+# regardless of which interfaces are up. manager_mesh_ip (192.168.42.1) is
+# the manager's fixed bat0 address, defined in group_vars/all.yml.
+- name: Pin manager0.gotham in /etc/hosts (prevents DNS race on containerd startup)
+  ansible.builtin.lineinfile:
+    path: /etc/hosts
+    regexp: '\bmanager0\.gotham\b'
+    line: "{{ manager_mesh_ip }} manager0.gotham manager0"
+    state: present
+

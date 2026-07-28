@@ -161,6 +161,75 @@ def scan_pis():
     return pis
 
 
+def mesh_proxy_extra_ssh_args(manager_wired_ip):
+    """-o ProxyCommand=... args (list form, no outer shell quoting) to reach
+    a mesh-only Pi through the manager, mirroring mesh_proxy_ssh_args."""
+    return [
+        "-o",
+        "ProxyCommand=sshpass -p {password} ssh -o StrictHostKeyChecking=no "
+        "-o UserKnownHostsFile=/dev/null -W %h:%p {user}@{manager_ip}".format(
+            password=SSH_PASSWORD, user=SSH_USER, manager_ip=manager_wired_ip
+        ),
+    ]
+
+
+def fetch_model(target, extra_ssh_args=None, timeout=5):
+    """SSH into `target` and read the Pi model string. None on any failure.
+
+    Manual-only (--model): never called from --list / the ansible flow.
+    """
+    cmd = [
+        "sshpass", "-p", SSH_PASSWORD,
+        "ssh", "-o", "StrictHostKeyChecking=no",
+        "-o", "UserKnownHostsFile=/dev/null",
+        "-o", f"ConnectTimeout={timeout}",
+        *(extra_ssh_args or []),
+        f"{SSH_USER}@{target}", "cat /proc/device-tree/model",
+    ]
+    try:
+        out = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=timeout + 5,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return None
+    if out.returncode != 0:
+        return None
+    return out.stdout.strip("\x00\n")
+
+
+def print_models():
+    """Manual-only: SSH each Pi (wired direct, mesh-only proxied through the
+    manager) and print name/ip/mac/model as a table."""
+    pis = scan_pis()
+    assignments = assign_hostnames(pis, load_assignments())
+    save_assignments(assignments)
+
+    wired_ip_by_mac = {mac: ip for ip, mac in pis}
+    manager_mac = next(
+        (mac for mac, name in assignments.items() if name == "manager0"), None
+    )
+    manager_wired_ip = wired_ip_by_mac.get(manager_mac)
+
+    rows = []
+    for mac, name in sorted(assignments.items(), key=lambda item: item[1]):
+        wired_ip = wired_ip_by_mac.get(mac)
+        if wired_ip is not None:
+            target, extra_args, shown_ip = wired_ip, None, wired_ip
+        elif manager_wired_ip is not None and mac != manager_mac:
+            target = f"{name}.gotham"
+            extra_args = mesh_proxy_extra_ssh_args(manager_wired_ip)
+            shown_ip = target
+        else:
+            rows.append((name, "(offline)", mac, "-"))
+            continue
+        model = fetch_model(target, extra_args) or "(unreachable)"
+        rows.append((name, shown_ip, mac, model))
+
+    widths = [max(len(row[i]) for row in rows) if rows else 0 for i in range(4)]
+    for name, ip, mac, model in rows:
+        print(f"{name:<{widths[0]}}  {ip:<{widths[1]}}  {mac:<{widths[2]}}  {model}")
+
+
 def mesh_proxy_ssh_args(manager_wired_ip):
     """ansible_ssh_common_args that tunnel through the manager's wired IP.
 
@@ -230,9 +299,15 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--list", action="store_true", help="emit the full inventory")
     parser.add_argument("--host", help="emit vars for one host (unused; see _meta)")
+    parser.add_argument(
+        "--model", action="store_true",
+        help="manual-only: SSH each wired Pi and print its model (not used by ansible)",
+    )
     args = parser.parse_args()
 
-    if args.host:
+    if args.model:
+        print_models()
+    elif args.host:
         # All hostvars are published via _meta, so per-host lookups are empty.
         print(json.dumps({}))
     else:
