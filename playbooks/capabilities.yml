@@ -230,8 +230,8 @@ capabilities:
       if [ "$RC" -ne 0 ]; then exit 2; fi
       echo "$OUT" | grep -qiE '46|UU' && exit 0 || exit 1
 
-  object-detection-heavy:
-    description: "Pi 5 or better — suitable for heavy ML workers (PaddleOCR + MediaPipe)"
+  rpi5:
+    description: "Pi 5"
     become: false
     timeout: 5
     hosts: all
@@ -244,8 +244,8 @@ capabilities:
       if [ -z "$MODEL" ]; then exit 2; fi
       echo "$MODEL" | grep -q "Raspberry Pi 5" && exit 0 || exit 1
 
-  object-detection-light:
-    description: "Pi 3 — suitable for lightweight ML workers (Tesseract + MediaPipe)"
+  rpi3:
+    description: "Pi 3"
     become: false
     timeout: 5
     hosts: all
