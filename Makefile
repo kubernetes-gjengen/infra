@@ -22,7 +22,7 @@ ifdef SKIP
   SKIP_FLAG := --skip-tags $(SKIP)
 endif
 
-.PHONY: help discover discover-model ping status identify provision reset reboot kubeconfig kubeconfig-copy deploy label watch registry-trust deploy-scheduler
+.PHONY: help discover discover-model ping status identify provision reset reboot kubeconfig kubeconfig-copy deploy label watch registry-trust deploy-scheduler start-logging stop-logging collect-logs
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*##"; printf "\nUsage:\n  make \033[36m<target>\033[0m [LIMIT=<host>]\n\nTargets:\n"} \
@@ -101,3 +101,14 @@ registry-trust: ## Configure THIS machine to push to the Zot registry (fetches t
 
 watch: ## Pick a live cluster view (scheduler logs, ...) and stream it. Ctrl-C to stop.
 	@shellscripts/watchctl.sh
+
+start-logging: ## Start field-test resource logging on all nodes (LIMIT=<host> for one)
+	cd $(PLAYBOOK_DIR) && ansible all -b -m ansible.builtin.command -a "systemctl start fieldlog-resource" $(LIMIT_FLAG)
+
+stop-logging: ## Stop field-test resource logging on all nodes (LIMIT=<host> for one)
+	cd $(PLAYBOOK_DIR) && ansible all -b -m ansible.builtin.command -a "systemctl stop fieldlog-resource" $(LIMIT_FLAG)
+
+collect-logs: ## Fetch fieldlog CSVs from all reachable nodes into collected-logs/<timestamp>/
+	$(eval TS := $(shell date +%Y%m%d-%H%M%S))
+	$(ANSIBLE) collect_logs.yml -e collect_dir=$(CURDIR)/collected-logs/$(TS)
+	@echo "Logs collected to collected-logs/$(TS)/"

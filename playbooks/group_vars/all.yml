@@ -19,3 +19,14 @@ manager_mesh_ip: "192.168.42.1"
 # survives the manager's wired IP changing, unlike a bare IP address.
 registry_ca_cert_path: "{{ lookup('env', 'HOME') }}/certs/registry-ca.crt"
 registry_host: "manager0.gotham:30500"
+
+# Field-test logging (tasks/setup_logging.yml, fieldlog_resource.sh). Kept
+# low-frequency/size-capped by default since it runs on the same SD card as
+# the OS - bump fieldlog_interval down for short high-resolution runs.
+fieldlog_interval: 5
+fieldlog_max_size_kb: 10240
+
+# network_prober.sh route logging: false = only the chosen nexthop per
+# destination (the starred `batctl o` row); true = every candidate nexthop,
+# much higher row count - only turn on for close mesh-routing debugging.
+fieldlog_all_routes: false

@@ -1,0 +1,31 @@
+---
+- name: Read current node-token on manager0
+  hosts: manager0
+  gather_facts: false
+  become: true
+  tasks:
+    - name: Slurp node-token
+      ansible.builtin.slurp:
+        src: /var/lib/rancher/k3s/server/node-token
+      register: node_token_b64
+      no_log: true
+
+- name: Fix stale K3S_TOKEN and rejoin
+  hosts: all:!manager0
+  gather_facts: false
+  become: true
+  vars:
+    fresh_token: "{{ hostvars['manager0'].node_token_b64.content | b64decode | trim }}"
+  tasks:
+    - name: Replace K3S_TOKEN in env file
+      ansible.builtin.lineinfile:
+        path: /etc/systemd/system/k3s-agent.service.env
+        regexp: '^K3S_TOKEN='
+        line: "K3S_TOKEN='{{ fresh_token }}'"
+      no_log: true
+
+    - name: Restart k3s-agent
+      ansible.builtin.systemd:
+        name: k3s-agent
+        state: restarted
+        daemon_reload: true

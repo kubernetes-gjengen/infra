@@ -1,0 +1,16 @@
+{
+  "b8:27:eb:6b:ff:a9": "worker2",
+  "b8:27:eb:7a:b3:de": "worker6",
+  "b8:27:eb:90:db:5d": "worker0",
+  "b8:27:eb:92:10:b6": "worker9",
+  "b8:27:eb:98:68:ff": "worker7",
+  "b8:27:eb:9b:67:7b": "worker8",
+  "b8:27:eb:d6:a9:64": "worker1",
+  "b8:27:eb:f2:e9:35": "worker4",
+  "b8:27:eb:fd:79:bb": "worker5",
+  "b8:27:eb:fe:d5:73": "worker3",
+  "d8:3a:dd:e1:84:b4": "worker11",
+  "d8:3a:dd:f5:36:c7": "worker10",
+  "d8:3a:dd:f5:39:ad": "worker12",
+  "d8:3a:dd:f5:43:87": "manager0"
+}

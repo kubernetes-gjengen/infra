@@ -134,6 +134,14 @@
       Environment="PROTO_FILE=/home/pi/message.proto"
       Environment="LATENCY_INTERVAL=5"
       Environment="THROUGHPUT_EVERY=6"
+      Environment="LOG_DIR=/logs"
+      Environment="MAX_SIZE_KB={{ fieldlog_max_size_kb }}"
+      Environment="LOG_ALL_ROUTES={{ fieldlog_all_routes }}"
+      # Read-only here - fieldlog-resource.service's RuntimeDirectory owns
+      # /run/fieldlog's lifecycle. This service keeps running regardless
+      # (MQTT publish must never depend on a session being active); it only
+      # uses the marker to decide whether to also write network/route CSVs.
+      Environment="SESSION_MARKER=/run/fieldlog/session_id"
 
       [Install]
       WantedBy=multi-user.target

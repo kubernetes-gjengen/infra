@@ -47,6 +47,10 @@
       ansible.builtin.include_tasks: tasks/configure_bashrc_prompt.yml
       tags: configure_prompt
 
+    - name: Configure timezone
+      ansible.builtin.include_tasks: tasks/configure_timezone.yml
+      tags: timezone
+
     # discover.py reassigns manager0/workerN names by current IP order on
     # every scan (no persisted identity), so this play can rename many hosts
     # in the same run. Avahi needs a moment to withdraw stale records and
@@ -274,6 +278,24 @@
   tasks:
     - name: Set up logs
       ansible.builtin.include_tasks: tasks/setup_logs.yml
+
+- name: Set up field-test logging
+  hosts: all
+  become: true
+  gather_facts: false
+  tags: fieldlog
+
+  handlers:
+    # try-restart (unlike restart) is a no-op on a stopped unit - a config
+    # change must never be what flips fieldlog-resource from stopped to
+    # running, only `make start-logging` may do that.
+    - name: Restart fieldlog-resource
+      ansible.builtin.command: systemctl try-restart fieldlog-resource
+      changed_when: false
+
+  tasks:
+    - name: Set up field logging
+      ansible.builtin.include_tasks: tasks/setup_logging.yml
 
 - name: Configure network prober
   hosts: manager:worker

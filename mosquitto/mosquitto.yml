@@ -27,7 +27,15 @@ spec:
       labels:
         app: mosquitto
     spec:
-      schedulerName: custom-scheduler
+      tolerations:
+        - key: node.kubernetes.io/not-ready
+          operator: Exists
+          effect: NoExecute
+          tolerationSeconds: 30
+        - key: node.kubernetes.io/unreachable
+          operator: Exists
+          effect: NoExecute
+          tolerationSeconds: 30
       containers:
         - name: mosquitto
           image: eclipse-mosquitto:2

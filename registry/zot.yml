@@ -73,6 +73,15 @@ spec:
       # `kubectl get nodes --show-labels` if scheduling ever gets stuck.
       nodeSelector:
         node-role.kubernetes.io/control-plane: "true"
+      tolerations:
+        - key: node.kubernetes.io/not-ready
+          operator: Exists
+          effect: NoExecute
+          tolerationSeconds: 30
+        - key: node.kubernetes.io/unreachable
+          operator: Exists
+          effect: NoExecute
+          tolerationSeconds: 30
       containers:
         - name: zot
           image: ghcr.io/project-zot/zot:v2.1.18

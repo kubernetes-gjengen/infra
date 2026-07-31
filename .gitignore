@@ -14,6 +14,9 @@ playbooks/kubeconfig.yml
 playbooks/inventories/discovered_hosts.json
 playbooks/files/k8-scheduler
 
+# field-test logs fetched by `make collect-logs`
+collected-logs/
+
 # registry TLS key material (should be generated outside the repo, but just in case)
 registry/*.key
 registry/*.crt

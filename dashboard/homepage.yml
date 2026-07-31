@@ -122,6 +122,15 @@ spec:
       serviceAccountName: homepage
       nodeSelector:
         capability/gui: "true"
+      tolerations:
+        - key: node.kubernetes.io/not-ready
+          operator: Exists
+          effect: NoExecute
+          tolerationSeconds: 30
+        - key: node.kubernetes.io/unreachable
+          operator: Exists
+          effect: NoExecute
+          tolerationSeconds: 30
       securityContext:
         runAsUser: 1000
         runAsGroup: 1000

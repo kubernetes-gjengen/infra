@@ -114,3 +114,8 @@
   retries: 6
   delay: 5
   changed_when: "'not labeled' not in capability_label_result.stdout"
+  # A labeling failure (node not Ready yet, API server hiccup) must not drop
+  # this host out of every later play in the run - logs/fieldlog/prober
+  # setup still need to happen even if this node's capability label doesn't
+  # get applied this pass. Re-running `make label` later retries just this.
+  ignore_errors: true
