@@ -1,0 +1,65 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: venividivici
+  labels:
+    app: venividivici
+spec:
+  replicas: 1
+  strategy:
+    # hostPath state file + hostNetwork ARP scanning - two copies racing on
+    # the same node would double-provision and corrupt discovered_hosts.json.
+    type: Recreate
+  selector:
+    matchLabels:
+      app: venividivici
+  template:
+    metadata:
+      labels:
+        app: venividivici
+    spec:
+      # ARP-scanning 192.168.3.0/24 needs to see manager0's actual br0
+      # interface, not a NATed pod network.
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      # Pinned to manager0 - same pattern as registry/zot.yml, since that's
+      # the only node bridged onto the wired setup LAN.
+      nodeSelector:
+        node-role.kubernetes.io/control-plane: "true"
+      tolerations:
+        - key: node.kubernetes.io/not-ready
+          operator: Exists
+          effect: NoExecute
+          tolerationSeconds: 30
+        - key: node.kubernetes.io/unreachable
+          operator: Exists
+          effect: NoExecute
+          tolerationSeconds: 30
+      containers:
+        - name: venividivici
+          image: manager0.gotham:30500/venividivici:latest
+          securityContext:
+            capabilities:
+              add: ["NET_RAW", "NET_ADMIN"] # nmap raw sockets for the ARP scan
+          env:
+            - name: REGISTRY_CA_CERT_PATH
+              value: /secrets/registry-ca.crt
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "128Mi"
+          volumeMounts:
+            - name: state
+              mountPath: /app/playbooks/inventories/discovered_hosts.json
+            - name: registry-ca
+              mountPath: /secrets
+              readOnly: true
+      volumes:
+        - name: state
+          hostPath:
+            path: /var/lib/venividivici/discovered_hosts.json
+            type: FileOrCreate
+        - name: registry-ca
+          secret:
+            # Not created by this manifest - see README.md.
+            secretName: registry-ca

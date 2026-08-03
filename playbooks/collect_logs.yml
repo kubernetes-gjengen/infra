@@ -54,8 +54,20 @@
     # collecting it. -o json gives a reliable per-line epoch timestamp
     # (__REALTIME_TIMESTAMP); the scheduler's own embedded "time=15:04:05"
     # field has no date and isn't safe to rely on alone.
+    #
+    # --since bounds this to scheduler_log_window (group_vars/all.yml) -
+    # without it this pulls the scheduler's *entire* journal history on
+    # every single collection (measured: 381MB / 339k lines for ~2 days at
+    # log_level=debug), not just the current experiment.
+    #
+    # become: true (unlike the CSV tasks above, which rely on /logs being
+    # world-writable) - journalctl needs root to read the system journal,
+    # and writing to /tmp needs to consistently be the same user each run or
+    # a stale file from a differently-privileged run blocks the next one
+    # with a silent (failed_when: false) permission error.
     - name: Dump k8-scheduler journal
-      ansible.builtin.shell: journalctl -u k8-scheduler -o json --no-pager > /tmp/{{ inventory_hostname }}-scheduler.jsonl
+      ansible.builtin.shell: journalctl -u k8-scheduler -o json --no-pager --since "{{ scheduler_log_window }}" > /tmp/{{ inventory_hostname }}-scheduler.jsonl
+      become: true
       when: inventory_hostname == 'manager0'
       changed_when: false
       failed_when: false
@@ -65,6 +77,7 @@
         src: "/tmp/{{ inventory_hostname }}-scheduler.jsonl"
         dest: "{{ collect_dir }}/{{ inventory_hostname }}/"
         flat: true
+      become: true
       when: inventory_hostname == 'manager0'
       ignore_unreachable: true
       ignore_errors: true

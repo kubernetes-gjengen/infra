@@ -31,3 +31,22 @@
   ansible.builtin.shell: cat /var/lib/rancher/k3s/server/node-token
   register: join_token
   changed_when: false
+
+# Scopes *.gotham resolution for pods to the manager's dnsmasq - see
+# ../../coredns/coredns-custom.yml for why this is needed (CoreDNS's default
+# forward-to-/etc/resolv.conf doesn't work from its pod netns). k3s watches
+# this manifest dir and auto-applies/re-applies it, so this survives
+# reprovisioning without a separate kubectl step.
+- name: Deploy CoreDNS custom config (forward *.gotham to dnsmasq)
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../coredns/coredns-custom.yml"
+    dest: /var/lib/rancher/k3s/server/manifests/coredns-custom.yaml
+    mode: "0644"
+  register: coredns_custom
+
+- name: Restart CoreDNS to pick up custom config
+  ansible.builtin.command: >-
+    kubectl --kubeconfig /etc/rancher/k3s/k3s.yaml
+    -n kube-system rollout restart deployment coredns
+  when: coredns_custom is changed
+  changed_when: true

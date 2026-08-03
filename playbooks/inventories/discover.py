@@ -111,6 +111,39 @@ def assign_hostnames(pis, assignments):
     return assignments
 
 
+def local_pi_entry():
+    """(ip, mac) for eth0 if this script is itself running on a Pi wired
+    into SCAN_SUBNET - None otherwise (e.g. running from a laptop).
+
+    A host never receives its own ARP reply, so scan_pis() alone can never
+    see the Pi it's actually running on. Harmless when run from the
+    manager's own venividivici pod for every *other* node, but without this
+    the manager's own MAC always looks "offline" to itself: sticky-manager
+    logic in assign_hostnames() then deletes its assignment and promotes a
+    different Pi to manager0 on every single run.
+    """
+    try:
+        mac = Path("/sys/class/net/eth0/address").read_text().strip().lower()
+    except OSError:
+        return None
+    if not mac.startswith(PI_OUIS):
+        return None
+    try:
+        out = subprocess.run(
+            ["ip", "-4", "-o", "addr", "show", "eth0"],
+            capture_output=True, text=True, check=True,
+        ).stdout
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return None
+    tokens = out.split()
+    if "inet" not in tokens:
+        return None
+    ip = tokens[tokens.index("inet") + 1].split("/")[0]
+    if not ip.startswith(SCAN_SUBNET.rsplit(".", 1)[0] + "."):
+        return None
+    return ip, mac
+
+
 def scan_pis():
     """ARP-scan the setup subnet; return [(ip, mac), ...] for Raspberry Pis.
 
@@ -157,6 +190,11 @@ def scan_pis():
             by_mac[mac] = (ip_key, ip)
 
     pis = [(ip, mac) for mac, (_, ip) in by_mac.items()]
+
+    local = local_pi_entry()
+    if local is not None and local[1] not in by_mac:
+        pis.append(local)
+
     pis.sort(key=lambda pi: tuple(int(octet) for octet in pi[0].split(".")))
     return pis
 

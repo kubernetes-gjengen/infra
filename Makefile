@@ -22,7 +22,7 @@ ifdef SKIP
   SKIP_FLAG := --skip-tags $(SKIP)
 endif
 
-.PHONY: help discover discover-model ping status identify provision reset reboot kubeconfig kubeconfig-copy deploy label watch registry-trust deploy-scheduler start-logging stop-logging collect-logs
+.PHONY: help discover discover-model ping status identify provision reset reboot kubeconfig kubeconfig-copy deploy label watch registry-trust deploy-scheduler start-logging stop-logging collect-logs known-hosts-reset venividivici-build venividivici-apply venividivici-logs venividivici-delete venividivici-rollout
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*##"; printf "\nUsage:\n  make \033[36m<target>\033[0m [LIMIT=<host>]\n\nTargets:\n"} \
@@ -40,6 +40,9 @@ discover-model: ## List Pis with their Pi model (SSHes into each, manual use onl
 ping: ## Ansible ping all discovered Pis
 	cd $(PLAYBOOK_DIR) && ansible all -m ping $(LIMIT_FLAG)
 
+known-hosts-reset: ## ssh-keygen -R every inventory host (run after reflashing/reimaging a Pi)
+	shellscripts/reset_known_hosts.sh
+
 status: ## Snapshot apt/dpkg activity on all Pis - tells a slow provision run apart from a stuck one. LIMIT=<host> for one Pi.
 	cd $(PLAYBOOK_DIR) && ansible all -b -m shell -a "echo '--- apt/dpkg processes ---'; ps aux | grep -E 'apt|dpkg' | grep -v grep; echo '--- dpkg lock holder (empty = free) ---'; fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock 2>&1 || true" $(LIMIT_FLAG)
 
@@ -52,6 +55,25 @@ identify: ## Blink one Pi's ACT LED for 30s to spot it physically. Usage: make i
 
 provision: ## Provision (or re-verify) the cluster. TAGS/SKIP=prober for just/without the network prober.
 	$(ANSIBLE) provision_all.yml $(LIMIT_FLAG) $(TAG_FLAG) $(SKIP_FLAG)
+
+## Automated provisioning (venividivici) - see venividivici/README.md for one-time setup
+
+venividivici-build: ## Build and push the venividivici (in-cluster auto-provisioner) arm64 image
+	docker buildx build --platform linux/arm64 -f venividivici/dockerfile -t manager0.gotham:30500/venividivici:latest --push .
+
+venividivici-apply: ## Apply the venividivici deployment (also ensures its hostPath state file exists on manager0)
+	cd $(PLAYBOOK_DIR) && ansible manager -b -m ansible.builtin.file -a "path=/var/lib/venividivici state=directory mode=0755"
+	cd $(PLAYBOOK_DIR) && ansible manager -b -m ansible.builtin.file -a "path=/var/lib/venividivici/discovered_hosts.json state=touch mode=0644"
+	kubectl apply -f venividivici/venividivici.yaml
+
+venividivici-logs: ## Follow the venividivici controller loop
+	kubectl logs -f deployment/venividivici
+
+venividivici-delete: ## Delete the venividivici deployment
+	kubectl delete -f venividivici/venividivici.yaml
+
+venividivici-rollout: ## Restart venividivici (picks up a new image)
+	kubectl rollout restart deployment/venividivici
 
 ## Cluster management
 

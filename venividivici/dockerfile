@@ -1,0 +1,20 @@
+FROM python:3.13-slim
+
+# ansible/sshpass/openssh-client/nmap/sudo mirror what discover.py and
+# provision_all.yml need when run from a laptop - see playbooks/inventories/discover.py
+# for why sudo nmap specifically is required (passwordless sudo, ARP scan).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ansible sshpass openssh-client nmap sudo \
+    && rm -rf /var/lib/apt/lists/* \
+    && pip install --no-cache-dir paho-mqtt
+
+WORKDIR /app
+COPY playbooks/ playbooks/
+# tasks reference ../shellscripts/*.sh and ../coredns/*.yml relative to
+# playbook_dir - several untagged plays in provision_all.yml (network_prober,
+# fieldlog, k3s manager install) need these, not just config_batman.
+COPY shellscripts/ shellscripts/
+COPY coredns/ coredns/
+COPY venividivici/controller.py venividivici/controller.py
+
+CMD ["python3", "venividivici/controller.py"]

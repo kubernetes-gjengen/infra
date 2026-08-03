@@ -98,6 +98,22 @@ capabilities:
     # different thing from the first draft's mistake of treating a
     # host-level gpsd *service's* running state as the signal.
     #
+    # 2026-08-03: DEV found this false-negativing fleet-wide: worker9 (USB
+    # puck), worker10 and worker11 (Dragino HAT UARTs) all confirmed
+    # /dev/gps0 present, gpsd starting, and gpsd's own DEVICES response
+    # showing the right path/bps - yet the check always exited 1 (ABSENT).
+    # Captured the raw gpsd stream directly: the WATCH ack came back as
+    # `"json":false,"nmea":false` - `?WATCH={"enable":true}` alone doesn't
+    # turn on JSON reporting, it only flips the watcher on, and a fresh
+    # gpsd connection's output-format flags default to false. Without
+    # json:true, gpsd never emits TPV/SKY class lines at all, so FOUND
+    # could never become 1 no matter how good the fix (or lack of one) -
+    # this was pure protocol bug, unrelated to sky visibility. Fixed by
+    # requesting `?WATCH={"enable":true,"json":true}`. Re-verified against
+    # all three hosts: worker9 streamed TPV mode=1 (indoor/no fix, as
+    # expected without sky access), worker10 streamed TPV mode=1, worker11
+    # streamed a full TPV mode=3 fix - all now correctly exit 0.
+    #
     # 2026-07-27: DEV found the check false-positiving fleet-wide: every
     # worker has /dev/gps0 -> ttyAMA0 once UART is enabled (configure_gps_
     # uart.yml, fleet-wide), regardless of whether a Dragino HAT is
@@ -152,7 +168,7 @@ capabilities:
       done
       if [ "$READY" -ne 1 ]; then exit 2; fi
 
-      echo '?WATCH={"enable":true}' >&3
+      echo '?WATCH={"enable":true,"json":true}' >&3
 
       # TPV/SKY here do NOT require an actual satellite fix - gpsd emits
       # them (TPV mode=0, SKY with an empty/sparse sat list) as soon as it

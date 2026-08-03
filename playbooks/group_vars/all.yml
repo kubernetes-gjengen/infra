@@ -30,3 +30,13 @@ fieldlog_max_size_kb: 10240
 # destination (the starred `batctl o` row); true = every candidate nexthop,
 # much higher row count - only turn on for close mesh-routing debugging.
 fieldlog_all_routes: false
+
+# collect_logs.yml's k8-scheduler journal dump (manager0 only): how far back
+# to read, in journalctl's own relative-time syntax. k8-scheduler runs
+# continuously (not tied to start-logging/stop-logging) at whatever
+# log_level its own config.yaml sets - at "debug" that's ~2 lines/sec, which
+# adds up to hundreds of MB over a couple of days. Bounded here so
+# `make collect-logs` fetches a recent window, not the scheduler's entire
+# history every single time; the visualizer trims it further to the actual
+# experiment's time range on top of this.
+scheduler_log_window: "2 hours ago"
