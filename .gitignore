@@ -11,7 +11,6 @@ __pycache__/
 # ansible artifacts
 ./artifacts
 playbooks/kubeconfig.yml
-playbooks/inventories/discovered_hosts.json
 playbooks/files/k8-scheduler
 
 # field-test logs fetched by `make collect-logs`
