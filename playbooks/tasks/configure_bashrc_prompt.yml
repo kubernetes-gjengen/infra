@@ -6,7 +6,7 @@
     create: true
     marker: "# {mark} ANSIBLE MANAGED BLOCK - custom PS1"
     block: |
-      PROMPT_COMMAND='PS1_CMD1=$(ip route get 1.1.1.1 | awk -F"src " '"'"'NR == 1{ split($2, a," ");print a[1]}'"'"')'
+      PROMPT_COMMAND='PS1_CMD1=$(ip route get 1.1.1.1 2&>/dev/null | awk -F"src " '"'"'NR == 1{ split($2, a," ");print a[1]}'"'"')'
       PS1='\[\e[38;5;38m\]\A\[\e[0m\] \[\e[92m\]\u@\h\[\e[0m\](\[\e[38;5;208m\]${PS1_CMD1}\[\e[0m\]):\w \$ '
 
 - name: Configure custom PS1 prompt in /home/pi/.bashrc
@@ -18,5 +18,5 @@
     group: pi
     marker: "# {mark} ANSIBLE MANAGED BLOCK - custom PS1"
     block: |
-      PROMPT_COMMAND='PS1_CMD1=$(ip route get 1.1.1.1 | awk -F"src " '"'"'NR == 1{ split($2, a," ");print a[1]}'"'"')'
+      PROMPT_COMMAND='PS1_CMD1=$(ip route get 1.1.1.1 2&>/dev/null | awk -F"src " '"'"'NR == 1{ split($2, a," ");print a[1]}'"'"')'
       PS1='\[\e[38;5;38m\]\A\[\e[0m\] \[\e[92m\]\u@\h\[\e[0m\](\[\e[38;5;208m\]${PS1_CMD1}\[\e[0m\]):\w \$ '
