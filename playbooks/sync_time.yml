@@ -1,0 +1,36 @@
+---
+# Forces an immediate clock resync against manager0 (the mesh's own time
+# reference - see tasks/configure_ntp.yml for the one-time server/client
+# setup this assumes is already provisioned) right before a logging
+# session, and waits for it to actually land. Run before every
+# start-logging, not just once at provision time - drift reaccumulates
+# between field tests. No internet dependency: manager0 is reachable over
+# the mesh alone, which is all a field test ever has.
+
+- name: Sync node clocks to manager0 before a logging session
+  hosts: all
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Force an immediate resync
+      ansible.builtin.command: chronyc makestep
+      changed_when: false
+      failed_when: false
+
+    # max-tries=15, max-correction=1s, max-skew=0.5ppm, interval=1s - a
+    # field test logging every 5s doesn't need sub-second precision, just
+    # "close enough to the rest of the mesh," so this isn't tuned tight.
+    - name: Wait for clock sync to converge
+      ansible.builtin.command: chronyc waitsync 15 1 0.5 1
+      register: wait_result
+      changed_when: false
+      failed_when: false
+
+    - name: Warn if a node's clock never synced
+      ansible.builtin.debug:
+        msg: >-
+          WARNING: {{ inventory_hostname }} did not sync to manager0 within ~15s
+          ({{ (wait_result.stdout_lines | default([]) | last) | default('no chronyc output - is chrony installed? see tasks/configure_ntp.yml / `make provision TAGS=ntp`') }})
+          - its logs for this session may be offset from the rest of the mesh.
+      when: wait_result.rc != 0

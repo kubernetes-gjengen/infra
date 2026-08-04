@@ -12,7 +12,7 @@
   register: current_tz
   changed_when: false
 
-- name: Set timezone to Europe/Oslo
-  ansible.builtin.command: timedatectl set-timezone Europe/Oslo
+- name: Set timezone to {{ cluster_timezone }}
+  ansible.builtin.command: "timedatectl set-timezone {{ cluster_timezone }}"
   become: true
-  when: current_tz.stdout != "Europe/Oslo"
+  when: current_tz.stdout != cluster_timezone

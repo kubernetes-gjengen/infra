@@ -2,7 +2,18 @@
 ## Run from the repo root. All ansible commands execute from playbooks/.
 
 PLAYBOOK_DIR := playbooks
-ANSIBLE      := cd $(PLAYBOOK_DIR) && ansible-playbook
+
+# Sources .env (repo root, gitignored - see .env.example) into the recipe's
+# shell before anything that reads config from it (ansible-playbook,
+# discover.py, docker). `-f` guard means a missing .env is a no-op, not an
+# error - group_vars/all.yml's lookup('env', ...) calls fall back to their
+# own defaults in that case. Prefixed onto recipes rather than loaded via
+# `include` because several values (e.g. SCHEDULER_LOG_WINDOW="2 hours ago")
+# contain spaces that Make's own include syntax doesn't quote the way a
+# shell `source` does.
+WITH_ENV := set -a; [ -f $(CURDIR)/.env ] && . $(CURDIR)/.env; set +a;
+
+ANSIBLE      := $(WITH_ENV) cd $(PLAYBOOK_DIR) && ansible-playbook
 
 # Sibling checkout of the scheduler repo; override if yours lives elsewhere.
 SCHEDULER_DIR ?= $(abspath $(CURDIR)/../scheduler)
@@ -32,10 +43,10 @@ help: ## Show this help
 ## Discovery
 
 discover: ## List Pis found on the LAN (dry-run, no SSH)
-	cd $(PLAYBOOK_DIR) && python3 inventories/discover.py --list
+	$(WITH_ENV) cd $(PLAYBOOK_DIR) && python3 inventories/discover.py --list
 
 discover-model: ## List Pis with their Pi model (SSHes into each, manual use only)
-	cd $(PLAYBOOK_DIR) && python3 inventories/discover.py --model
+	$(WITH_ENV) cd $(PLAYBOOK_DIR) && python3 inventories/discover.py --model
 
 ping: ## Ansible ping all discovered Pis
 	cd $(PLAYBOOK_DIR) && ansible all -m ping $(LIMIT_FLAG)
@@ -59,7 +70,7 @@ provision: ## Provision (or re-verify) the cluster. TAGS/SKIP=prober for just/wi
 ## Automated provisioning (venividivici) - see venividivici/README.md for one-time setup
 
 venividivici-build: ## Build and push the venividivici (in-cluster auto-provisioner) arm64 image
-	docker buildx build --platform linux/arm64 -f venividivici/dockerfile -t manager0.gotham:30500/venividivici:latest --push .
+	$(WITH_ENV) docker buildx build --platform linux/arm64 -f venividivici/dockerfile -t "$${REGISTRY_HOST:-manager0.gotham}:$${REGISTRY_PORT:-30500}/venividivici:latest" --push .
 
 venividivici-apply: ## Apply the venividivici deployment (also ensures its hostPath state file exists on manager0)
 	cd $(PLAYBOOK_DIR) && ansible manager -b -m ansible.builtin.file -a "path=/var/lib/venividivici state=directory mode=0755"
@@ -124,13 +135,14 @@ registry-trust: ## Configure THIS machine to push to the Zot registry (fetches t
 watch: ## Pick a live cluster view (scheduler logs, ...) and stream it. Ctrl-C to stop.
 	@shellscripts/watchctl.sh
 
-start-logging: ## Start field-test resource logging on all nodes (LIMIT=<host> for one)
+start-logging: ## Sync node clocks, then start field-test resource logging on all nodes (LIMIT=<host> for one)
+	$(ANSIBLE) sync_time.yml $(LIMIT_FLAG)
 	cd $(PLAYBOOK_DIR) && ansible all -b -m ansible.builtin.command -a "systemctl start fieldlog-resource" $(LIMIT_FLAG)
 
 stop-logging: ## Stop field-test resource logging on all nodes (LIMIT=<host> for one)
 	cd $(PLAYBOOK_DIR) && ansible all -b -m ansible.builtin.command -a "systemctl stop fieldlog-resource" $(LIMIT_FLAG)
 
-collect-logs: ## Fetch fieldlog CSVs from all reachable nodes into collected-logs/<timestamp>/
+collect-logs: ## Fetch fieldlog CSVs, scheduler journal, and radio-wrapper app pod logs into collected-logs/<timestamp>/
 	$(eval TS := $(shell date +%Y%m%d-%H%M%S))
 	$(ANSIBLE) collect_logs.yml -e collect_dir=$(CURDIR)/collected-logs/$(TS)
 	@echo "Logs collected to collected-logs/$(TS)/"

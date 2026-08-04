@@ -26,23 +26,40 @@ DHCP-leased bat0 address.
 Usage (invoked by Ansible): discover.py --list / discover.py --host <name>
 Requires passwordless `sudo nmap` on the provisioner.
 """
+
 import argparse
 import json
+import os
 import subprocess
 import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+# Repo-root .env (see .env.example) - security has not been prioritized here,
+# see that file's header. Best-effort: if python-dotenv isn't installed,
+# these constants just fall back to their literal defaults below, same as
+# ever - only `pip install python-dotenv` (or running via `make`, which
+# sources .env itself) actually picks up overrides.
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv(Path(__file__).resolve().parent.parent.parent / ".env")
+except ImportError:
+    pass
+
 # Wired subnet the Pis boot onto before the mesh exists.
-SCAN_SUBNET = "192.168.3.0/24"
+SCAN_SUBNET = os.environ.get("WIRED_SCAN_SUBNET", "192.168.67.0/24")
 
 # Raspberry Pi MAC OUI prefixes (same set absorb.py filters DHCP traffic on).
 PI_OUIS = ("28:cd:c1", "b8:27:eb", "d8:3a:dd", "dc:a6:32", "e4:5f:01")
 # Pi 5 OUIs - preferred as the manager, since the Pi 5 is the beefy node.
 PI5_OUIS = ("d8:3a:dd", "e4:5f:01")
 
-SSH_USER = "pi"
-SSH_PASSWORD = "raspberry"
+SSH_USER = os.environ.get("PI_SSH_USER", "pi")
+SSH_PASSWORD = os.environ.get("PI_SSH_PASSWORD", "raspberry")
+
+# DNS suffix the manager's dnsmasq serves (group_vars/all.yml's gotham_domain).
+GOTHAM_DOMAIN = os.environ.get("GOTHAM_DOMAIN", "gotham")
 
 # Persisted MAC -> hostname assignments. Resolved relative to this file (not
 # cwd) so it works the same regardless of where ansible invokes the script
@@ -131,7 +148,9 @@ def local_pi_entry():
     try:
         out = subprocess.run(
             ["ip", "-4", "-o", "addr", "show", "eth0"],
-            capture_output=True, text=True, check=True,
+            capture_output=True,
+            text=True,
+            check=True,
         ).stdout
     except (subprocess.CalledProcessError, FileNotFoundError):
         return None
@@ -217,16 +236,26 @@ def fetch_model(target, extra_ssh_args=None, timeout=5):
     Manual-only (--model): never called from --list / the ansible flow.
     """
     cmd = [
-        "sshpass", "-p", SSH_PASSWORD,
-        "ssh", "-o", "StrictHostKeyChecking=no",
-        "-o", "UserKnownHostsFile=/dev/null",
-        "-o", f"ConnectTimeout={timeout}",
+        "sshpass",
+        "-p",
+        SSH_PASSWORD,
+        "ssh",
+        "-o",
+        "StrictHostKeyChecking=no",
+        "-o",
+        "UserKnownHostsFile=/dev/null",
+        "-o",
+        f"ConnectTimeout={timeout}",
         *(extra_ssh_args or []),
-        f"{SSH_USER}@{target}", "cat /proc/device-tree/model",
+        f"{SSH_USER}@{target}",
+        "cat /proc/device-tree/model",
     ]
     try:
         out = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=timeout + 5,
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout + 5,
         )
     except (subprocess.TimeoutExpired, FileNotFoundError):
         return None
@@ -254,7 +283,7 @@ def print_models():
         if wired_ip is not None:
             target, extra_args, shown_ip = wired_ip, None, wired_ip
         elif manager_wired_ip is not None and mac != manager_mac:
-            target = f"{name}.gotham"
+            target = f"{name}.{GOTHAM_DOMAIN}"
             extra_args = mesh_proxy_extra_ssh_args(manager_wired_ip)
             shown_ip = target
         else:
@@ -277,8 +306,8 @@ def mesh_proxy_ssh_args(manager_wired_ip):
     """
     return (
         "-o StrictHostKeyChecking=no "
-        "-o ProxyCommand=\"sshpass -p {password} ssh -o StrictHostKeyChecking=no "
-        "-o UserKnownHostsFile=/dev/null -W %h:%p {user}@{manager_ip}\""
+        '-o ProxyCommand="sshpass -p {password} ssh -o StrictHostKeyChecking=no '
+        '-o UserKnownHostsFile=/dev/null -W %h:%p {user}@{manager_ip}"'
     ).format(password=SSH_PASSWORD, user=SSH_USER, manager_ip=manager_wired_ip)
 
 
@@ -315,7 +344,7 @@ def build_inventory():
         elif manager_wired_ip is not None and mac != manager_mac:
             # Off wired LAN, manager up - reach over mesh, proxied through manager.
             hostvars = {
-                "ansible_host": f"{name}.gotham",
+                "ansible_host": f"{name}.{GOTHAM_DOMAIN}",
                 "ansible_user": SSH_USER,
                 "ansible_password": SSH_PASSWORD,
                 "ansible_become_pass": SSH_PASSWORD,
@@ -338,7 +367,8 @@ def main():
     parser.add_argument("--list", action="store_true", help="emit the full inventory")
     parser.add_argument("--host", help="emit vars for one host (unused; see _meta)")
     parser.add_argument(
-        "--model", action="store_true",
+        "--model",
+        action="store_true",
         help="manual-only: SSH each wired Pi and print its model (not used by ansible)",
     )
     args = parser.parse_args()

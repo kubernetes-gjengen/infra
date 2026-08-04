@@ -1,0 +1,5 @@
+# For running playbooks/inventories/discover.py and venividivici/controller.py
+# locally (outside the venividivici container). Optional: both scripts fall
+# back to their hardcoded defaults if python-dotenv isn't installed, they
+# just won't pick up .env overrides.
+python-dotenv

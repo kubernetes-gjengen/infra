@@ -7,7 +7,7 @@
 - name: Ensure nameserver is configured
   ansible.builtin.lineinfile:
     path: /etc/resolv.conf
-    line: "nameserver 1.1.1.1"
+    line: "nameserver {{ fallback_dns }}"
     state: present
 
 - name: Install iperf3 and jq and mosquitto-clients
@@ -25,7 +25,7 @@
 
 - name: Install grpcurl
   ansible.builtin.unarchive:
-    src: https://github.com/fullstorydev/grpcurl/releases/download/v1.9.3/grpcurl_1.9.3_linux_arm64.tar.gz
+    src: "https://github.com/fullstorydev/grpcurl/releases/download/v{{ grpcurl_version }}/grpcurl_{{ grpcurl_version }}_linux_arm64.tar.gz"
     dest: /usr/local/bin
     remote_src: true
     creates: /usr/local/bin/grpcurl
@@ -137,6 +137,9 @@
       Environment="LOG_DIR=/logs"
       Environment="MAX_SIZE_KB={{ fieldlog_max_size_kb }}"
       Environment="LOG_ALL_ROUTES={{ fieldlog_all_routes }}"
+      Environment="MQTT_HOST={{ mqtt_host }}"
+      Environment="MQTT_PORT={{ mqtt_port }}"
+      Environment="MQTT_TOPIC={{ mqtt_topic_linkdata }}"
       # Read-only here - fieldlog-resource.service's RuntimeDirectory owns
       # /run/fieldlog's lifecycle. This service keeps running regardless
       # (MQTT publish must never depend on a session being active); it only

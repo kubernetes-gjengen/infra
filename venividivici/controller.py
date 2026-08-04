@@ -19,17 +19,32 @@ from pathlib import Path
 import paho.mqtt.client as mqtt
 from paho.mqtt.enums import CallbackAPIVersion
 
+# Repo-root .env (see .env.example) - only meaningful when this script runs
+# outside the venividivici container (e.g. local testing), since the
+# Deployment (venividivici.yaml) sets these directly as container env vars.
+# Best-effort: python-dotenv missing just means no override, same as ever.
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+except ImportError:
+    pass
+
 PLAYBOOKS_DIR = Path("/app/playbooks")
 sys.path.insert(0, str(PLAYBOOKS_DIR / "inventories"))
 import discover  # noqa: E402
 
-POLL_INTERVAL = int(os.environ.get("POLL_INTERVAL", "30"))
-SSH_PROBE_TIMEOUT = 5
+POLL_INTERVAL = int(os.environ.get("VENIVIDIVICI_POLL_INTERVAL", "30"))
+SSH_PROBE_TIMEOUT = int(os.environ.get("VENIVIDIVICI_SSH_PROBE_TIMEOUT", "5"))
 REGISTRY_CA_CERT_PATH = os.environ.get("REGISTRY_CA_CERT_PATH", "/secrets/registry-ca.crt")
 
-MQTT_BROKER = os.environ.get("MQTT_BROKER", "mosquitto.default.svc.cluster.local")
-MQTT_PORT = int(os.environ.get("MQTT_PORT", 1883))
-EVENT_TOPIC = os.environ.get("EVENT_TOPIC", "event/node-discovered")
+# Distinct names from the node-side MQTT_HOST/MQTT_PORT (.env) - those point
+# at the NodePort (31883) other scripts reach from outside the cluster; this
+# is the in-cluster ClusterIP address/port, a different value entirely, and
+# both would otherwise collide under the same .env this script also loads.
+MQTT_BROKER = os.environ.get("VENIVIDIVICI_MQTT_BROKER", "mosquitto.default.svc.cluster.local")
+MQTT_PORT = int(os.environ.get("VENIVIDIVICI_MQTT_PORT", 1883))
+EVENT_TOPIC = os.environ.get("VENIVIDIVICI_EVENT_TOPIC", "event/node-discovered")
 
 
 def on_connect(_client, _userdata, _connect_flags, reason_code, _properties):

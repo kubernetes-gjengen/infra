@@ -15,7 +15,7 @@ export LC_NUMERIC=C
 REFRESH="${1:-3}"
 MQTT_HOST="${MQTT_HOST:-manager0.local}"
 MQTT_PORT="${MQTT_PORT:-31883}"
-MQTT_TOPIC="network/linkdata"
+MQTT_TOPIC="${MQTT_TOPIC:-network/linkdata}"
 
 case "$REFRESH" in
 '-h' | '--help')

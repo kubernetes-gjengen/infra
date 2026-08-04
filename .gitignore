@@ -1,7 +1,6 @@
 # virtualenv / pyenv
 .venv
-./env/
-./.env
+env/
 .python-version
 
 # Python bytecode
@@ -9,7 +8,11 @@ __pycache__/
 *.pyc
 
 # ansible artifacts
-./artifacts
+artifacts
+
+# local config (see .env.example) - never committed
+.env
+
 playbooks/kubeconfig.yml
 playbooks/files/k8-scheduler
 

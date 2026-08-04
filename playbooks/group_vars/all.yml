@@ -1,10 +1,57 @@
 ---
+# Values here are read from the repo-root .env (see .env.example) via
+# lookup('env', ...), falling back to the same default shown alongside each
+# lookup if .env isn't sourced into the environment - so `ansible-playbook`
+# run directly (not via `make`, which sources .env for you - see the
+# Makefile's WITH_ENV) still works unmodified. Security has not been
+# prioritized for the credential-shaped values here (see .env.example).
+
 # Single source of truth for the mesh gateway.
 #
 # The manager holds this fixed address on bat0 and runs the DHCP/DNS server
 # (dnsmasq). Workers lease their own bat0 address from it, so the manager's
 # is the only mesh IP that must be pinned down anywhere.
-manager_mesh_ip: "192.168.42.1"
+manager_mesh_ip: "{{ lookup('env', 'MESH_MANAGER_IP') | default('192.168.42.1', true) }}"
+
+# DHCP pool the manager's dnsmasq hands out to workers on bat0 (consumed by
+# the "Configure DHCP/DNS on manager" play in provision_all.yml).
+mesh_dhcp_start: "{{ lookup('env', 'MESH_DHCP_START') | default('192.168.42.2', true) }}"
+mesh_dhcp_end: "{{ lookup('env', 'MESH_DHCP_END') | default('192.168.42.254', true) }}"
+mesh_dhcp_lease_hours: "{{ lookup('env', 'MESH_DHCP_LEASE_HOURS') | default('12', true) }}"
+
+# Derived from manager_mesh_ip's first 3 octets, not its own env var - the
+# repo otherwise only uses ansible.builtin (no ipaddr filter / netcommon
+# collection available), so this is plain string manipulation rather than a
+# real subnet-mask calculation. Correct for the /24 this repo actually runs
+# (mesh_dhcp_start/end above), and stays consistent with manager_mesh_ip if
+# that's ever overridden. Used by tasks/configure_ntp.yml's chrony `allow`.
+mesh_subnet_cidr: "{{ manager_mesh_ip.split('.')[0:3] | join('.') }}.0/24"
+
+# wlan0 ad-hoc mesh radio config (shellscripts/config_batman2_electric_boogaloo.sh,
+# templated into its systemd Environment= lines by 00_configure_network_common.yml).
+mesh_ssid: "{{ lookup('env', 'MESH_SSID') | default('meshnet', true) }}"
+mesh_channel: "{{ lookup('env', 'MESH_CHANNEL') | default('1', true) }}"
+
+# DNS suffix for the manager's dnsmasq - templates/dnsmasq.conf.j2,
+# tasks/configure_dhcp_server.yml's systemd-resolved search domain.
+gotham_domain: "{{ lookup('env', 'GOTHAM_DOMAIN') | default('gotham', true) }}"
+
+# k3s API server port - kubeconfig.yml, K3S_URL in install_k3s_worker.yml,
+# the k3s.yaml loopback-address substitution in provision_all.yml/configure_prober.yml.
+k3s_api_port: "{{ lookup('env', 'K3S_API_PORT') | default('6443', true) }}"
+
+# Applied to every node (tasks/configure_timezone.yml) so cross-node log
+# timestamps line up.
+cluster_timezone: "{{ lookup('env', 'CLUSTER_TIMEZONE') | default('Europe/Oslo', true) }}"
+
+# Nameserver used where a node needs one outside the mesh's own dnsmasq
+# (probe.yml's resolv.conf fallback, configure_bashrc_prompt.yml's "what's
+# my outbound IP" route probe).
+fallback_dns: "{{ lookup('env', 'FALLBACK_DNS') | default('1.1.1.1', true) }}"
+
+# grpcurl release fetched onto each node (probe.yml, configure_prober.yml) for
+# the currently-unused gRPC LinkService probe path.
+grpcurl_version: "{{ lookup('env', 'GRPCURL_VERSION') | default('1.9.3', true) }}"
 
 # Zot registry (registry/zot.yml) trust config, consumed by
 # tasks/configure_registry_trust.yml. registry_ca_cert_path is read from the
@@ -18,18 +65,20 @@ manager_mesh_ip: "192.168.42.1"
 # for the same reason (K3S_URL in tasks/install_k3s_worker.yml) - it
 # survives the manager's wired IP changing, unlike a bare IP address.
 registry_ca_cert_path: "{{ lookup('env', 'HOME') }}/certs/registry-ca.crt"
-registry_host: "manager0.gotham:30500"
+registry_hostname: "{{ lookup('env', 'REGISTRY_HOST') | default('manager0.gotham', true) }}"
+registry_port: "{{ lookup('env', 'REGISTRY_PORT') | default('30500', true) }}"
+registry_host: "{{ registry_hostname }}:{{ registry_port }}"
 
 # Field-test logging (tasks/setup_logging.yml, fieldlog_resource.sh). Kept
 # low-frequency/size-capped by default since it runs on the same SD card as
 # the OS - bump fieldlog_interval down for short high-resolution runs.
-fieldlog_interval: 5
-fieldlog_max_size_kb: 10240
+fieldlog_interval: "{{ lookup('env', 'FIELDLOG_INTERVAL') | default('5', true) }}"
+fieldlog_max_size_kb: "{{ lookup('env', 'FIELDLOG_MAX_SIZE_KB') | default('10240', true) }}"
 
 # network_prober.sh route logging: false = only the chosen nexthop per
 # destination (the starred `batctl o` row); true = every candidate nexthop,
 # much higher row count - only turn on for close mesh-routing debugging.
-fieldlog_all_routes: false
+fieldlog_all_routes: "{{ lookup('env', 'FIELDLOG_ALL_ROUTES') | default('false', true) }}"
 
 # collect_logs.yml's k8-scheduler journal dump (manager0 only): how far back
 # to read, in journalctl's own relative-time syntax. k8-scheduler runs
@@ -39,4 +88,22 @@ fieldlog_all_routes: false
 # `make collect-logs` fetches a recent window, not the scheduler's entire
 # history every single time; the visualizer trims it further to the actual
 # experiment's time range on top of this.
-scheduler_log_window: "2 hours ago"
+scheduler_log_window: "{{ lookup('env', 'SCHEDULER_LOG_WINDOW') | default('2 hours ago', true) }}"
+
+# gRPC LinkService port-forward target (provision_all.yml's "Configure
+# network prober" play) - defined but currently unused, network_prober.sh's
+# send_grpc path is commented out in favor of MQTT.
+probe_grpc_port: "{{ lookup('env', 'PROBE_GRPC_PORT') | default('30042', true) }}"
+
+# Mosquitto broker each node's network_prober.sh publishes link data to
+# (probe.yml's systemd Environment= lines). 127.0.0.1 works because it's a
+# k3s NodePort, reachable from any node (including itself) at that port.
+#
+# Deliberately PROBE_MQTT_* in .env, not bare MQTT_HOST/MQTT_PORT: this is
+# the on-node value (127.0.0.1). watch_links.sh (laptop-side, off-mesh) needs
+# a different correct default (manager0.local) for its own MQTT_HOST/
+# MQTT_PORT env vars - sharing one .env key between the two would silently
+# break whichever context isn't the default's target.
+mqtt_host: "{{ lookup('env', 'PROBE_MQTT_HOST') | default('127.0.0.1', true) }}"
+mqtt_port: "{{ lookup('env', 'PROBE_MQTT_PORT') | default('31883', true) }}"
+mqtt_topic_linkdata: "{{ lookup('env', 'MQTT_TOPIC_LINKDATA') | default('network/linkdata', true) }}"

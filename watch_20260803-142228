@@ -1,0 +1,13 @@
+NAME                               READY   STATUS        RESTARTS        AGE     IP             NODE       NOMINATED NODE   READINESS GATES    
+bapi-6d497c8b48-jl8hr              1/1     Terminating   0               3h55m   10.42.3.7      worker8    <none>           <none>             
+gpsd-client-6tz2v                  1/1     Running       1 (25m ago)     3h18m   10.42.8.10     worker11   <none>           <none>             
+gpsd-client-mzbwf                  1/1     Running       1 (25m ago)     3h18m   10.42.11.11    worker10   <none>           <none>             
+gpsd-client-tvbr4                  1/1     Running       1 (24m ago)     3h18m   10.42.2.12     worker9    <none>           <none>             
+maviz-597d5cbbb7-xpsq8             1/1     Terminating   0               3h50m   10.42.14.202   worker13   <none>           <none>             
+mosquitto-5ffc59c966-5drz4         1/1     Terminating   0               4d2h    10.42.3.3      worker8    <none>           <none>             
+mosquitto-6b6959d478-rmmdv         1/1     Running       0               5m9s    10.42.7.14     worker7    <none>           <none>             
+radio-processor-6d94f98955-qmsxj   1/1     Terminating   0               4d1h    10.42.3.6      worker8    <none>           <none>             
+radio-receiver-5dbf5f9d69-x588q    1/1     Terminating   2 (3d21h ago)   4d1h    10.42.1.10     worker3    <none>           <none>             
+                                                                                                                                               
+NAME                   READY   STATUS    RESTARTS      AGE    IP           NODE       NOMINATED NODE   READINESS GATES                         
+zot-7484c797f5-d2ndf   1/1     Running   1 (22m ago)   4d2h   10.42.0.23   manager0   <none>           <none>                                  

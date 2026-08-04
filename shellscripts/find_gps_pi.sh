@@ -10,11 +10,12 @@ set -uo pipefail
 # Hosts can be given as short names (manager0, worker3, ...) - they're
 # resolved via mDNS as <host>.local, same convention as watch_links.sh.
 #
-# Env: SSH_USER (default: pi), SSH_PASS (default: raspberry, this project's
-# default Pi credential - see discover.py), TIMEOUT seconds per host (default: 5)
+# Env: PI_SSH_USER (default: pi), PI_SSH_PASSWORD (default: raspberry, this
+# project's default Pi credential - see .env.example/discover.py), TIMEOUT
+# seconds per host (default: 5)
 
-SSH_USER="${SSH_USER:-pi}"
-SSH_PASS="${SSH_PASS:-raspberry}"
+SSH_USER="${PI_SSH_USER:-pi}"
+SSH_PASS="${PI_SSH_PASSWORD:-raspberry}"
 TIMEOUT="${TIMEOUT:-5}"
 hosts=()
 

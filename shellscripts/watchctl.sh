@@ -9,8 +9,9 @@ set -uo pipefail
 #   watchctl.sh             fzf-pick a target
 #   watchctl.sh pods        pick this specific target directly
 
-SSH_USER="${SSH_USER:-pi}"
-SSH_PASS="${SSH_PASS:-raspberry}"
+SSH_USER="${PI_SSH_USER:-pi}"
+SSH_PASS="${PI_SSH_PASSWORD:-raspberry}"
+MANAGER_HOST="${MANAGER_HOST:-manager0.local}"
 
 TARGETS=(scheduler pods nodes services)
 
@@ -60,8 +61,8 @@ fi
 
 case "$target" in
 scheduler)
-  echo "==> watching k8-scheduler.service on manager0.local (Ctrl-C to stop)"
-  ssh_run "$SSH_USER@manager0.local" journalctl -u k8-scheduler.service -f
+  echo "==> watching k8-scheduler.service on $MANAGER_HOST (Ctrl-C to stop)"
+  ssh_run "$SSH_USER@$MANAGER_HOST" journalctl -u k8-scheduler.service -f
   ;;
 pods)
   # default holds the app deployments; registry holds the Zot registry

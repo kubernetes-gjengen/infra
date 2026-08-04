@@ -350,7 +350,7 @@
     - name: Remove nameserver line added for the network prober
       ansible.builtin.lineinfile:
         path: /etc/resolv.conf
-        line: "nameserver 1.1.1.1"
+        line: "nameserver {{ fallback_dns }}"
         state: absent
 
     - name: Remove /logs directory

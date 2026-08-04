@@ -81,3 +81,41 @@
       when: inventory_hostname == 'manager0'
       ignore_unreachable: true
       ignore_errors: true
+
+    # radio-wrapper (radio-receiver/radio-processor) app pod logs. These are
+    # NOT streamed anywhere during the experiment - kubelet already writes
+    # every container's stdout to this node's own local disk as a normal
+    # part of running the pod, same as any other container runtime. Reading
+    # that file over SSH after the fact costs nothing during the run itself;
+    # `kubectl logs`, by contrast, streams via the k3s API server, which for
+    # a pod scheduled on a *worker* means relaying the whole log through the
+    # batman-adv mesh to manager0 and out to the operator's laptop for the
+    # entire experiment - exactly the kind of extra mesh traffic a
+    # network-baseline field test can't afford. Queried on every node (not
+    # just wherever the pod happens to be right now) since a replicas=1
+    # deployment can be rescheduled to a different node mid-experiment, and
+    # the file for whichever node it left behind still needs collecting.
+    # become: true - only root/the container runtime's group can read these.
+    - name: Find radio-wrapper app pod container logs
+      ansible.builtin.find:
+        paths: /var/log/containers
+        patterns:
+          - "radio-receiver-*.log*"
+          - "radio-processor-*.log*"
+      register: found_app_logs
+      become: true
+      ignore_unreachable: true
+      ignore_errors: true
+
+    - name: Fetch radio-wrapper app pod container logs
+      ansible.builtin.fetch:
+        src: "{{ item.path }}"
+        dest: "{{ collect_dir }}/{{ inventory_hostname }}/"
+        flat: true
+      loop: "{{ found_app_logs.files | default([]) }}"
+      loop_control:
+        label: "{{ item.path | default('?') }}"
+      become: true
+      when: found_app_logs is succeeded
+      ignore_unreachable: true
+      ignore_errors: true

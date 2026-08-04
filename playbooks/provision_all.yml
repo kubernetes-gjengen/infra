@@ -51,6 +51,10 @@
       ansible.builtin.include_tasks: tasks/configure_timezone.yml
       tags: timezone
 
+    - name: Configure mesh-local NTP (manager0 as time server, no internet needed)
+      ansible.builtin.include_tasks: tasks/configure_ntp.yml
+      tags: ntp
+
     # discover.py reassigns manager0/workerN names by current IP order on
     # every scan (no persisted identity), so this play can rename many hosts
     # in the same run. Avahi needs a moment to withdraw stale records and
@@ -134,9 +138,9 @@
   gather_facts: false
   vars:
     bat_interface: bat0
-    dhcp_start: "192.168.42.2"
-    dhcp_end: "192.168.42.254"
-    lease_time: 12
+    dhcp_start: "{{ mesh_dhcp_start }}"
+    dhcp_end: "{{ mesh_dhcp_end }}"
+    lease_time: "{{ mesh_dhcp_lease_hours }}"
   tasks:
     - name: Configure dnsmasq
       ansible.builtin.include_tasks: tasks/configure_dhcp_server.yml
@@ -253,8 +257,8 @@
       ansible.builtin.copy:
         content: >-
           {{ (manager_kubeconfig.content | b64decode).replace(
-            'https://127.0.0.1:6443',
-            'https://' + (manager_wired_ip.stdout | trim) + ':6443'
+            'https://127.0.0.1:' + k3s_api_port,
+            'https://' + (manager_wired_ip.stdout | trim) + ':' + k3s_api_port
           ) }}
         dest: "{{ playbook_dir }}/kubeconfig.yml"
       delegate_to: localhost
@@ -306,7 +310,7 @@
   vars:
     manager_bat_ip: "{{ manager_mesh_ip }}"
     grpc_host: "{{ manager_mesh_ip }}"
-    grpc_port: "30042"
+    grpc_port: "{{ probe_grpc_port }}"
 
   handlers:
     - name: Restart network_prober

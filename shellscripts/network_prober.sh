@@ -16,6 +16,9 @@ LOG_DIR="${LOG_DIR:-/logs}"
 MAX_SIZE_KB="${MAX_SIZE_KB:-10240}"
 LOG_ALL_ROUTES="${LOG_ALL_ROUTES:-false}" # false = only the chosen (starred) nexthop per destination; true = every candidate
 SESSION_MARKER="${SESSION_MARKER:-/run/fieldlog/session_id}"
+MQTT_HOST="${MQTT_HOST:-127.0.0.1}" # 127.0.0.1 works because it's a k3s NodePort, reachable from any node
+MQTT_PORT="${MQTT_PORT:-31883}"
+MQTT_TOPIC="${MQTT_TOPIC:-network/linkdata}"
 
 cycle=0
 declare -A last_throughput
@@ -146,7 +149,7 @@ neighbor_to_ip() {
 #   fi
 # }
 send_json() {
-  mosquitto_pub -h "127.0.0.1" -p 31883 -t network/linkdata -m $1
+  mosquitto_pub -h "$MQTT_HOST" -p "$MQTT_PORT" -t "$MQTT_TOPIC" -m $1
 }
 
 probe_latency() {

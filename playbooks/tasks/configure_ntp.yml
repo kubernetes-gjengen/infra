@@ -1,0 +1,58 @@
+---
+# Field tests have no reachback to the internet - only the mesh (batman-adv)
+# between nodes. Syncing against public NTP pools is useless in that case,
+# and what actually matters is nodes being close to *each other*, not to
+# true UTC. manager0 (fixed 192.168.42.1, already the mesh's DHCP/DNS server
+# - group_vars/all.yml) is the natural time reference: it runs chrony in
+# server mode with `local stratum 10`, so it always has *a* time to hand
+# out even with zero upstream reachability; every other node points its
+# chrony client at manager0's mesh IP specifically (not default internet
+# pools), so relative sync doesn't depend on connectivity a field test
+# doesn't have.
+#
+# One-time setup (provision-time, tag `ntp`) - see sync_time.yml for the
+# "force a resync right before this session" step that assumes this is
+# already configured.
+
+- name: Install chrony
+  ansible.builtin.apt:
+    name: chrony
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+# systemd-timesyncd and chrony both trying to steer the clock fights the
+# same job - chrony is the one actually configured to use the mesh, so it
+# needs to be the only client running.
+- name: Disable systemd-timesyncd's own NTP client
+  ansible.builtin.command: timedatectl set-ntp false
+  changed_when: false
+
+- name: Configure manager0 as the mesh time server
+  ansible.builtin.blockinfile:
+    path: /etc/chrony/chrony.conf
+    marker: "# {mark} ANSIBLE MANAGED BLOCK - mesh time server"
+    block: |
+      # Always has *a* time to serve, even with zero upstream reachability -
+      # field tests have no internet, only the mesh between nodes.
+      local stratum 10
+      allow {{ mesh_subnet_cidr }}
+  when: "'manager' in group_names"
+
+- name: Point workers' chrony client at manager0's mesh IP
+  ansible.builtin.blockinfile:
+    path: /etc/chrony/chrony.conf
+    marker: "# {mark} ANSIBLE MANAGED BLOCK - mesh time client"
+    block: |
+      # `prefer` over any pool/default servers already in this file - those
+      # need internet a field test doesn't have; manager0 is reachable over
+      # the mesh regardless.
+      server {{ manager_mesh_ip }} iburst prefer
+  when: "'manager' not in group_names"
+
+- name: Enable and restart chrony
+  ansible.builtin.systemd:
+    name: chrony
+    daemon_reload: true
+    enabled: true
+    state: restarted
