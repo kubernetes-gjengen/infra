@@ -134,10 +134,6 @@ log_routes() {
     }' >>"$ROUTE_LOG_FILE"
 }
 
-neighbor_to_ip() {
-  getent hosts "$1" 2>/dev/null | awk '{print $1; exit}'
-}
-
 # send_grpc() {
 #   if ! grpcurl -plaintext \
 #     -import-path "$(dirname "$PROTO_FILE")" \
@@ -149,7 +145,7 @@ neighbor_to_ip() {
 #   fi
 # }
 send_json() {
-  mosquitto_pub -h "$MQTT_HOST" -p "$MQTT_PORT" -t "$MQTT_TOPIC" -m $1
+  mosquitto_pub -h "$MQTT_HOST" -p "$MQTT_PORT" -t "$MQTT_TOPIC" -m "$1"
 }
 
 probe_latency() {
@@ -230,13 +226,7 @@ while true; do
     sleep $((RANDOM % 15))
     for neighbor in "${neighbors[@]}"; do
       [ -z "$neighbor" ] && continue
-      local_ip="$neighbor".gotham
-      [ -z "$local_ip" ] &&
-        {
-          echo "$(date -Iseconds) WARN: no IP for $neighbor, skipping throughput" >&2
-          continue
-        }
-      probe_throughput "$neighbor" "$local_ip"
+      probe_throughput "$neighbor" "$neighbor.gotham"
     done
   fi
 

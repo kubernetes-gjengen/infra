@@ -11,6 +11,12 @@
   hosts: all
   become: true
   gather_facts: false
+  # A node unreachable here must not abort the whole `make start-logging`
+  # chain (sync_time.yml -> systemctl start on every node): without this,
+  # ansible-playbook exits non-zero on any single dark host, Make aborts the
+  # recipe right there, and *no* node - not even reachable ones - gets its
+  # logger started. Same best-effort rationale as collect_logs.yml.
+  ignore_unreachable: true
 
   tasks:
     - name: Force an immediate resync
@@ -18,11 +24,17 @@
       changed_when: false
       failed_when: false
 
-    # max-tries=15, max-correction=1s, max-skew=0.5ppm, interval=1s - a
-    # field test logging every 5s doesn't need sub-second precision, just
-    # "close enough to the rest of the mesh," so this isn't tuned tight.
+    # max-tries=15, max-correction=1s, max-skew=5ppm, interval=1s - a field
+    # test logging every 5s doesn't need sub-second precision, just "close
+    # enough to the rest of the mesh," so this isn't tuned tight. max-skew
+    # was originally 0.5ppm, but `chronyc tracking` on a converged, sub-ms-
+    # offset fleet showed steady-state skew jitter up to ~0.7ppm on this Pi
+    # hardware (worker11/13 observed) - 0.5 was tighter than actual clock
+    # quality ever settles to, so it produced permanent false "did not sync"
+    # warnings on otherwise perfectly synced nodes. 5ppm is well above that
+    # observed noise floor while still catching genuinely bad clocks.
     - name: Wait for clock sync to converge
-      ansible.builtin.command: chronyc waitsync 15 1 0.5 1
+      ansible.builtin.command: chronyc waitsync 15 1 5 1
       register: wait_result
       changed_when: false
       failed_when: false

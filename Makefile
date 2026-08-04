@@ -137,10 +137,10 @@ watch: ## Pick a live cluster view (scheduler logs, ...) and stream it. Ctrl-C t
 
 start-logging: ## Sync node clocks, then start field-test resource logging on all nodes (LIMIT=<host> for one)
 	$(ANSIBLE) sync_time.yml $(LIMIT_FLAG)
-	cd $(PLAYBOOK_DIR) && ansible all -b -m ansible.builtin.command -a "systemctl start fieldlog-resource" $(LIMIT_FLAG)
+	$(WITH_ENV) cd $(PLAYBOOK_DIR) && ansible all -b -m ansible.builtin.command -a "systemctl start fieldlog-resource" $(LIMIT_FLAG)
 
 stop-logging: ## Stop field-test resource logging on all nodes (LIMIT=<host> for one)
-	cd $(PLAYBOOK_DIR) && ansible all -b -m ansible.builtin.command -a "systemctl stop fieldlog-resource" $(LIMIT_FLAG)
+	$(WITH_ENV) cd $(PLAYBOOK_DIR) && ansible all -b -m ansible.builtin.command -a "systemctl stop fieldlog-resource" $(LIMIT_FLAG)
 
 collect-logs: ## Fetch fieldlog CSVs, scheduler journal, and radio-wrapper app pod logs into collected-logs/<timestamp>/
 	$(eval TS := $(shell date +%Y%m%d-%H%M%S))

@@ -4,6 +4,14 @@
 # Best-effort log fetch: a node that dropped off the mesh mid-experiment is
 # skipped, not treated as a failure - that's expected during field tests,
 # not an error condition.
+#
+# All fetches use ansible.posix.synchronize (rsync) instead of find+fetch
+# loops, for a single result line per node instead of one per file.
+# use_ssh_args: true is required (ansible.posix defaults it to false) so
+# synchronize's own ssh invocation picks up discover.py's per-host
+# ansible_ssh_common_args - without it, nodes only reachable via the
+# manager0 mesh ProxyCommand (worker7/9/10/11's ".gotham" hostnames, see
+# discover.py's mesh_proxy_ssh_args) fail with "Could not resolve hostname".
 
 - name: Collect field-test logs from all nodes
   hosts: all
@@ -13,36 +21,40 @@
     collect_dir: "{{ playbook_dir }}/../collected-logs/manual"
 
   tasks:
-    # Scoped to this host's own hostname prefix, not a bare "*.csv*" - a
-    # physical Pi that was ever relabeled by discover.py's MAC-based naming
-    # (e.g. when the worker9/10/11 hardware got auto-enrolled and reshuffled
-    # assignments) keeps its previous identity's CSVs sitting in /logs
-    # forever; NODE_ID only changes what *new* files get named, it doesn't
-    # clean up old ones. An unscoped find would sweep those up too and
-    # attribute another node's historical data to this one.
-    - name: Find fieldlog CSVs
-      ansible.builtin.find:
-        paths: /logs
-        patterns: "{{ inventory_hostname }}-*.csv*"
-      register: found_logs
-      ignore_unreachable: true
-      ignore_errors: true
+    # rsync (unlike ansible.builtin.fetch) only creates one missing leaf
+    # directory, not the full path - collect_dir's timestamped parent won't
+    # exist yet on a fresh collection run, so the synchronize tasks below
+    # need this created first or their first-ever mkdir fails.
+    - name: Ensure local per-node collect directory exists
+      ansible.builtin.file:
+        path: "{{ collect_dir }}/{{ inventory_hostname }}"
+        state: directory
+        mode: "0755"
+      delegate_to: localhost
 
-    # ignore_errors here for the same reason as the unreachable-node case
-    # above: network_prober.sh writes to these files continuously (see
-    # shellscripts/network_prober.sh), so fetching one mid-write can lose
-    # the checksum race against a row that landed between the pre-transfer
-    # stat and the post-transfer verification - that's expected raciness on
-    # a live log, not a failure worth aborting the run over.
+    # rsync pull (one task/one result line per node, instead of a find +
+    # looped-fetch that printed a line per file) filtered to this host's own
+    # hostname prefix, not a bare "*.csv*" - a physical Pi that was ever
+    # relabeled by discover.py's MAC-based naming (e.g. when the
+    # worker9/10/11 hardware got auto-enrolled and reshuffled assignments)
+    # keeps its previous identity's CSVs sitting in /logs forever; NODE_ID
+    # only changes what *new* files get named, it doesn't clean up old ones.
+    # An unscoped pull would sweep those up too and attribute another node's
+    # historical data to this one.
+    #
+    # ignore_errors for the same reason as the unreachable-node case above:
+    # network_prober.sh writes to these files continuously (see
+    # shellscripts/network_prober.sh), so a file caught mid-write is
+    # expected raciness on a live log, not a failure worth aborting over.
     - name: Fetch fieldlog CSVs
-      ansible.builtin.fetch:
-        src: "{{ item.path }}"
+      ansible.posix.synchronize:
+        mode: pull
+        src: "/logs/"
         dest: "{{ collect_dir }}/{{ inventory_hostname }}/"
-        flat: true
-      loop: "{{ found_logs.files | default([]) }}"
-      loop_control:
-        label: "{{ item.path | default('?') }}"
-      when: found_logs is succeeded
+        use_ssh_args: true
+        rsync_opts:
+          - "--include={{ inventory_hostname }}-*.csv*"
+          - "--exclude=*"
       ignore_unreachable: true
       ignore_errors: true
 
@@ -96,17 +108,42 @@
     # deployment can be rescheduled to a different node mid-experiment, and
     # the file for whichever node it left behind still needs collecting.
     # become: true - only root/the container runtime's group can read these.
+    # Deliberately ansible.builtin.find+fetch, not synchronize like the CSV
+    # task above: rsync can only escalate on the *remote* end via
+    # --rsync-path="sudo rsync", which has no way to supply a password and
+    # so hard-requires true passwordless sudo on every node. That's not
+    # something this repo provisions or guarantees (it's inherited from
+    # each Pi's base image) - worker7 was found missing it, breaking this
+    # task while 6/7 other nodes worked fine. find+fetch goes through
+    # ansible's own become, which can push ansible_become_pass over a pty,
+    # so it doesn't share that hard dependency. Verbosity is a non-issue
+    # here unlike the CSV task above - at most one file per pod per node.
+    # file_type: link is required - /var/log/containers/*.log entries are
+    # symlinks to /var/log/pods/.../N.log (standard kubelet/containerd
+    # layout), and find's default file_type: file flatly excludes symlinks
+    # from matching at all (regardless of the unrelated `follow` option,
+    # which only affects recursing into symlinked *directories*). Without
+    # this, found_app_logs.files is always empty and the fetch task below
+    # always skips - a pre-existing bug, never triggered before now because
+    # the radio-wrapper containers had never actually run in a session with
+    # log collection until this one.
     - name: Find radio-wrapper app pod container logs
       ansible.builtin.find:
         paths: /var/log/containers
         patterns:
           - "radio-receiver-*.log*"
           - "radio-processor-*.log*"
+        file_type: link
       register: found_app_logs
       become: true
       ignore_unreachable: true
       ignore_errors: true
 
+    # ansible.builtin.fetch reads through the path with a normal open(),
+    # which transparently follows a symlink to its target content - unlike
+    # rsync's archive mode (see the CSV task's sibling above), no extra
+    # option is needed here to get real log content instead of a dangling
+    # link.
     - name: Fetch radio-wrapper app pod container logs
       ansible.builtin.fetch:
         src: "{{ item.path }}"
