@@ -13,6 +13,54 @@
     path: /usr/local/bin/k3s
   register: k3s_bin
 
+- name: Ensure /etc/rancher/k3s exists
+  ansible.builtin.file:
+    path: /etc/rancher/k3s
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+# Node lifecycle controller's disruption-protection defaults assume a large
+# cluster: for zones <= large-cluster-size-threshold (default 50), a
+# FullDisruption/PartialDisruption zone state (>=unhealthy-zone-threshold,
+# default 55%, of nodes NotReady at once) drops the eviction rate to *zero*
+# instead of secondary-node-eviction-rate - it assumes that's a network
+# partition, not real node failure, and freezes eviction until enough nodes
+# come back. Our 5-node cluster is always "small" against that default, so
+# powering off enough Pis at once (the exact MANET scenario this project
+# tests) permanently wedges pod eviction until every node reports Ready
+# again - pods on still-down nodes stay "Running" in the API forever, so
+# nothing (default or custom scheduler) ever gets a chance to reschedule
+# them. large-cluster-size-threshold=0 makes the controller always take the
+# secondary-rate branch instead of the zero branch; secondary-node-eviction-rate
+# is raised from its slow default (0.01/s, ~1 pod/100s) to match the normal
+# rate so eviction after a partition stays fast, matching the tolerationSeconds
+# already set on workload pods (see mosquitto.yml, zot.yml, homepage.yml,
+# venividivici.yaml).
+#
+# terminated-pod-gc-threshold: separate issue from the above - PodGC only
+# deletes terminal (Evicted/Failed/Succeeded) pod objects once their count
+# passes this threshold, default 12500. That's tuned for large clusters and
+# never fires here, so a pod that keeps getting evicted and recreated on the
+# same pinned node (e.g. hardware-bound pods like radio-processor, which can
+# only ever schedule onto the one Pi with the radio attached) leaves an
+# ever-growing pile of dead pod objects behind instead of being cleaned up.
+# We run ~10 pods at once at most, so 10 is already generous headroom before
+# GC kicks in.
+- name: Deploy k3s server config (fast eviction + prompt terminal-pod GC)
+  ansible.builtin.copy:
+    dest: /etc/rancher/k3s/config.yaml
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      kube-controller-manager-arg:
+        - "large-cluster-size-threshold=0"
+        - "secondary-node-eviction-rate=0.1"
+        - "terminated-pod-gc-threshold=1"
+  register: k3s_server_config
+
 - name: Install k3s server
   ansible.builtin.shell: |
     set -o pipefail
@@ -20,6 +68,14 @@
   args:
     executable: /bin/bash
   when: not k3s_bin.stat.exists
+
+- name: Restart k3s to apply server config change
+  ansible.builtin.systemd:
+    name: k3s
+    state: restarted
+  when:
+    - k3s_bin.stat.exists
+    - k3s_server_config is changed
 
 - name: Wait for node-token to appear
   ansible.builtin.wait_for:
