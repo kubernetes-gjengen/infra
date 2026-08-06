@@ -49,8 +49,12 @@ cluster_timezone: "{{ lookup('env', 'CLUSTER_TIMEZONE') | default('Europe/Oslo',
 # my outbound IP" route probe).
 fallback_dns: "{{ lookup('env', 'FALLBACK_DNS') | default('1.1.1.1', true) }}"
 
-# grpcurl release fetched onto each node (probe.yml, configure_prober.yml) for
-# the currently-unused gRPC LinkService probe path.
+# grpcurl release - was fetched onto each node for the network prober's
+# gRPC LinkService path, which is gone entirely now (dead/commented out in
+# the old bash script already, and the C prober never had it - see
+# prober/context_for_claude.txt). Only configure_prober.yml (orphaned, not
+# included by any playbook) still references this; kept in case something
+# else picks grpcurl back up.
 grpcurl_version: "{{ lookup('env', 'GRPCURL_VERSION') | default('1.9.3', true) }}"
 
 # Zot registry (registry/zot.yml) trust config, consumed by
@@ -75,10 +79,25 @@ registry_host: "{{ registry_hostname }}:{{ registry_port }}"
 fieldlog_interval: "{{ lookup('env', 'FIELDLOG_INTERVAL') | default('5', true) }}"
 fieldlog_max_size_kb: "{{ lookup('env', 'FIELDLOG_MAX_SIZE_KB') | default('10240', true) }}"
 
-# network_prober.sh route logging: false = only the chosen nexthop per
-# destination (the starred `batctl o` row); true = every candidate nexthop,
-# much higher row count - only turn on for close mesh-routing debugging.
+# prober's LOG_ALL_ROUTES: false = don't write the peer-table dump CSV at
+# all; true = one row per known peer (incl. throughput-demoted/absent, not
+# just currently-eligible ones) every discovery_interval - much higher row
+# count, only turn on for close mesh-connectivity debugging. Redefined from
+# the old bash script's batman nexthop-routing dump now that the prober
+# measures wlan0 directly and no longer reads batman's routing table at all
+# (see prober/src/discover.c).
 fieldlog_all_routes: "{{ lookup('env', 'FIELDLOG_ALL_ROUTES') | default('false', true) }}"
+
+# C prober tuning (probe.yml's systemd Environment= lines) - defaults here
+# match prober/config.ini; override via env if a field test needs different
+# cadence. See prober/inc/config.h for the full old-script-env-var mapping.
+prober_port: "{{ lookup('env', 'PROBER_PORT') | default('5210', true) }}"
+prober_latency_interval: "{{ lookup('env', 'PROBER_LATENCY_INTERVAL') | default('5', true) }}"
+prober_latency_samples: "{{ lookup('env', 'PROBER_LATENCY_SAMPLES') | default('5', true) }}"
+prober_throughput_interval: "{{ lookup('env', 'PROBER_THROUGHPUT_INTERVAL') | default('30', true) }}"
+prober_throughput_duration_ms: "{{ lookup('env', 'PROBER_THROUGHPUT_DURATION_MS') | default('3000', true) }}"
+prober_discovery_interval: "{{ lookup('env', 'PROBER_DISCOVERY_INTERVAL') | default('60', true) }}"
+prober_timeout_ms: "{{ lookup('env', 'PROBER_TIMEOUT_MS') | default('800', true) }}"
 
 # collect_logs.yml's k8-scheduler journal dump (manager0 only): how far back
 # to read, in journalctl's own relative-time syntax. k8-scheduler runs

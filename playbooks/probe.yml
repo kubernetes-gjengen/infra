@@ -1,8 +1,15 @@
 ---
-# Task list only (no hosts/become/vars/handlers) - this is loaded via
-# include_tasks from the "Configure network prober" play in
-# provision_all.yml, which supplies those. grpc_host/grpc_port and the
-# Restart network_prober handler live on that calling play.
+# Task list only (no hosts/become/vars/handlers) - loaded via include_tasks
+# from the "Configure network prober" play in provision_all.yml, which
+# supplies those.
+#
+# Replaces the old bash network_prober.sh with the C prober
+# (../../../prober/). That switch dropped the gRPC path entirely (was
+# already dead/commented out in the bash version), iperf3 (throughput is
+# now a custom UDP protocol - see prober/context_for_claude.txt - so the
+# iperf3 server this play used to start is no longer needed), and
+# mosquitto-clients/jq (the C prober speaks MQTT and builds JSON itself,
+# see prober/src/mqtt.c and prober/src/linkpublish.c).
 
 - name: Ensure nameserver is configured
   ansible.builtin.lineinfile:
@@ -10,40 +17,17 @@
     line: "nameserver {{ fallback_dns }}"
     state: present
 
-- name: Install iperf3 and jq and mosquitto-clients
-  ansible.builtin.apt:
-    name: [iperf3, jq, mosquitto-clients]
-    state: present
-    update_cache: true
-    cache_valid_time: 3600
-
-- name: Enable and start iperf3 server
-  ansible.builtin.systemd:
-    name: iperf3
-    enabled: true
-    state: started
-
-- name: Install grpcurl
-  ansible.builtin.unarchive:
-    src: "https://github.com/fullstorydev/grpcurl/releases/download/v{{ grpcurl_version }}/grpcurl_{{ grpcurl_version }}_linux_arm64.tar.gz"
-    dest: /usr/local/bin
-    remote_src: true
-    creates: /usr/local/bin/grpcurl
-
-# - name: Add bat0 mesh IPs to /etc/hosts
-#   ansible.builtin.lineinfile:
-#     path: /etc/hosts
-#     regexp: '\s{{ hostvars[item].inventory_hostname }}$'
-#     line: "{{ hostvars[item].assigned_ip }} {{ hostvars[item].inventory_hostname }}"
-#     state: present
-#   loop: "{{ groups['all'] }}"
-
-# network_prober.sh's get_neighbors() relies on batctl resolving MACs to
-# node names via /etc/bat-hosts - without it, `batctl o` prints raw MACs,
-# and the "$neighbor".gotham hostname the script builds for throughput
-# probing turns into an unresolvable "aa:bb:cc:dd:ee:ff.gotham". Every host
-# computes the same bat_hosts_content independently (rather than a
-# run_once + hostvars[] indirection) so this doesn't depend on every host
+# network_prober.sh's get_neighbors() relied on batctl resolving MACs to
+# node names via /etc/bat-hosts - the C prober no longer needs the file for
+# its own peer table (it always asks neighbors directly via a multicast
+# DISCOVER packet, see prober/src/discover.c, since the file isn't
+# guaranteed complete) and instead keeps the file in sync FROM what it
+# learns on the wire (prober/src/bathosts.c). This task now only matters as
+# a bootstrap seed - so /etc/bat-hosts (and batctl's own use of it for
+# `batctl o` display) isn't empty before the prober's first discovery round
+# - and as a fallback for anything else on the node that still reads it.
+# Every host computes the same bat_hosts_content independently (rather than
+# a run_once + hostvars[] indirection) so this doesn't depend on every host
 # reaching this task in the same forks batch - relies on ansible.cfg's
 # forks being >= the fleet size so every host has already set its own
 # bat_mac fact by the time any host reads the others' via hostvars.
@@ -96,19 +80,35 @@
     mode: "0644"
   notify: Restart network_prober
 
-- name: Copy message.proto
-  ansible.builtin.copy:
-    src: files/message.proto
-    dest: /home/pi/message.proto
-    owner: pi
-    group: pi
-    mode: "0644"
-  notify: Restart network_prober
+# The pi never builds anything - it has no toolchain and no source. The
+# binary is cross-compiled once, here, on the control node (see
+# prober/Dockerfile - real cross-compiler, no QEMU) and only the resulting
+# arm64 static executable is shipped out. Fixes two prior incidents from
+# copying src/ wholesale and building on-device: dragging .git over the
+# slow mesh link, and stray x86_64 .o files from a local `make` linking
+# into a broken ARM binary. Also means 16 pis no longer each burn CPU/time
+# compiling the identical source.
+- name: Cross-compile prober for arm64
+  delegate_to: localhost
+  become: false
+  run_once: true
+  ansible.builtin.command:
+    cmd: make docker-build
+    chdir: "{{ playbook_dir }}/../../prober"
+  changed_when: true
 
-- name: Copy agent script
+- name: Ensure prober directory exists
+  ansible.builtin.file:
+    path: /home/pi/prober
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Copy prober binary
   ansible.builtin.copy:
-    src: "{{ playbook_dir }}/../shellscripts/network_prober.sh"
-    dest: /home/pi/network_prober.sh
+    src: "{{ playbook_dir }}/../../prober/dist/prober"
+    dest: /home/pi/prober/prober
     owner: root
     group: root
     mode: "0755"
@@ -120,31 +120,40 @@
     mode: "0644"
     content: |
       [Unit]
-      Description=Batman-adv network probe agent
-      After=network.target batman.service
+      Description=Mesh network probe agent
+      After=network.target
 
       [Service]
-      ExecStart=/home/pi/network_prober.sh
+      ExecStart=/home/pi/prober/prober
+      WorkingDirectory=/home/pi/prober
       Restart=always
       RestartSec=10
-      # Environment="GRPC_HOST={{ grpc_host }}"
-      # Environment="GRPC_PORT={{ grpc_port }}"
+      # Soft CPU priority boost via the standard (fully preemptible) CFS
+      # scheduler - insurance against colocated pods (mosquitto, inference
+      # workloads) CPU-starving the prober, without the failure mode of a
+      # real-time scheduling class wedging the node if the prober itself
+      # misbehaves.
+      Nice=-10
       Environment="NODE_ID={{ inventory_hostname }}"
-      Environment="BAT_IFACE=bat0"
-      Environment="PROTO_FILE=/home/pi/message.proto"
-      Environment="LATENCY_INTERVAL=5"
-      Environment="THROUGHPUT_EVERY=6"
+      Environment="IFACE=wlan0"
+      Environment="PROBE_PORT={{ prober_port }}"
+      Environment="LATENCY_INTERVAL={{ prober_latency_interval }}"
+      Environment="LATENCY_SAMPLES={{ prober_latency_samples }}"
+      Environment="THROUGHPUT_INTERVAL={{ prober_throughput_interval }}"
+      Environment="THROUGHPUT_DURATION_MS={{ prober_throughput_duration_ms }}"
+      Environment="DISCOVERY_INTERVAL={{ prober_discovery_interval }}"
+      Environment="PROBE_TIMEOUT_MS={{ prober_timeout_ms }}"
       Environment="LOG_DIR=/logs"
       Environment="MAX_SIZE_KB={{ fieldlog_max_size_kb }}"
       Environment="LOG_ALL_ROUTES={{ fieldlog_all_routes }}"
-      Environment="MQTT_HOST={{ mqtt_host }}"
-      Environment="MQTT_PORT={{ mqtt_port }}"
-      Environment="MQTT_TOPIC={{ mqtt_topic_linkdata }}"
       # Read-only here - fieldlog-resource.service's RuntimeDirectory owns
       # /run/fieldlog's lifecycle. This service keeps running regardless
       # (MQTT publish must never depend on a session being active); it only
       # uses the marker to decide whether to also write network/route CSVs.
       Environment="SESSION_MARKER=/run/fieldlog/session_id"
+      Environment="MQTT_HOST={{ mqtt_host }}"
+      Environment="MQTT_PORT={{ mqtt_port }}"
+      Environment="MQTT_TOPIC={{ mqtt_topic_linkdata }}"
 
       [Install]
       WantedBy=multi-user.target
