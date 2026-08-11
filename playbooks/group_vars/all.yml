@@ -48,7 +48,7 @@ mesh_channel: "{{ lookup('env', 'MESH_CHANNEL') | default('1', true) }}"
 gotham_domain: "{{ lookup('env', 'GOTHAM_DOMAIN') | default('gotham', true) }}"
 
 # k3s API server port - kubeconfig.yml, K3S_URL in install_k3s_worker.yml,
-# the k3s.yaml loopback-address substitution in provision_all.yml/configure_prober.yml.
+# the k3s.yaml loopback-address substitution in provision_all.yml.
 k3s_api_port: "{{ lookup('env', 'K3S_API_PORT') | default('6443', true) }}"
 
 # Applied to every node (tasks/configure_timezone.yml) so cross-node log
@@ -59,14 +59,6 @@ cluster_timezone: "{{ lookup('env', 'CLUSTER_TIMEZONE') | default('Europe/Oslo',
 # (probe.yml's resolv.conf fallback, configure_bashrc_prompt.yml's "what's
 # my outbound IP" route probe).
 fallback_dns: "{{ lookup('env', 'FALLBACK_DNS') | default('1.1.1.1', true) }}"
-
-# grpcurl release - was fetched onto each node for the network prober's
-# gRPC LinkService path, which is gone entirely now (dead/commented out in
-# the old bash script already, and the C prober never had it - see
-# prober/context_for_claude.txt). Only configure_prober.yml (orphaned, not
-# included by any playbook) still references this; kept in case something
-# else picks grpcurl back up.
-grpcurl_version: "{{ lookup('env', 'GRPCURL_VERSION') | default('1.9.3', true) }}"
 
 # Zot registry (registry/zot.yml) trust config, consumed by
 # tasks/configure_registry_trust.yml. registry_ca_cert_path is read from the
@@ -120,12 +112,7 @@ prober_timeout_ms: "{{ lookup('env', 'PROBER_TIMEOUT_MS') | default('800', true)
 # experiment's time range on top of this.
 scheduler_log_window: "{{ lookup('env', 'SCHEDULER_LOG_WINDOW') | default('2 hours ago', true) }}"
 
-# gRPC LinkService port-forward target (provision_all.yml's "Configure
-# network prober" play) - defined but currently unused, network_prober.sh's
-# send_grpc path is commented out in favor of MQTT.
-probe_grpc_port: "{{ lookup('env', 'PROBE_GRPC_PORT') | default('30042', true) }}"
-
-# Mosquitto broker each node's network_prober.sh publishes link data to
+# Mosquitto broker each node's prober publishes link data to
 # (probe.yml's systemd Environment= lines). 127.0.0.1 works because it's a
 # k3s NodePort, reachable from any node (including itself) at that port.
 #

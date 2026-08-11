@@ -307,11 +307,6 @@
   become: true
   gather_facts: false
 
-  vars:
-    manager_bat_ip: "{{ manager_mesh_ip }}"
-    grpc_host: "{{ manager_mesh_ip }}"
-    grpc_port: "{{ probe_grpc_port }}"
-
   handlers:
     - name: Restart network_prober
       ansible.builtin.systemd:
