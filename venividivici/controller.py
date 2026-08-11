@@ -1,13 +1,6 @@
 #!/usr/bin/env python3
 """Poll loop: ARP-scan for never-before-seen Pis, queue them, SSH-probe the
-queue, and batch-trigger a full provision_all.yml run once any of them
-answer SSH.
-
-Runs as the venividivici Deployment's only container, pinned to manager0.
-discovered_hosts.json (hostPath-mounted, shared with discover.py) is what
-makes a MAC "known" - this script only decides *when* to invoke ansible;
-hostname assignment, inventory building and the actual provisioning steps
-all still live in discover.py / provision_all.yml, unmodified.
+queue, and batch-trigger a full provision_all.yml run once any of them answer SSH.
 """
 import json
 import os
@@ -19,10 +12,7 @@ from pathlib import Path
 import paho.mqtt.client as mqtt
 from paho.mqtt.enums import CallbackAPIVersion
 
-# Repo-root .env (see .env.example) - only meaningful when this script runs
-# outside the venividivici container (e.g. local testing), since the
-# Deployment (venividivici.yaml) sets these directly as container env vars.
-# Best-effort: python-dotenv missing just means no override, same as ever.
+# Only meaningful running outside the container; the Deployment sets these as env vars directly.
 try:
     from dotenv import load_dotenv
 
@@ -38,10 +28,7 @@ POLL_INTERVAL = int(os.environ.get("VENIVIDIVICI_POLL_INTERVAL", "30"))
 SSH_PROBE_TIMEOUT = int(os.environ.get("VENIVIDIVICI_SSH_PROBE_TIMEOUT", "5"))
 REGISTRY_CA_CERT_PATH = os.environ.get("REGISTRY_CA_CERT_PATH", "/secrets/registry-ca.crt")
 
-# Distinct names from the node-side MQTT_HOST/MQTT_PORT (.env) - those point
-# at the NodePort (31883) other scripts reach from outside the cluster; this
-# is the in-cluster ClusterIP address/port, a different value entirely, and
-# both would otherwise collide under the same .env this script also loads.
+# Distinct names from the node-side MQTT_HOST/MQTT_PORT - this is the in-cluster ClusterIP, not the NodePort.
 MQTT_BROKER = os.environ.get("VENIVIDIVICI_MQTT_BROKER", "mosquitto.default.svc.cluster.local")
 MQTT_PORT = int(os.environ.get("VENIVIDIVICI_MQTT_PORT", 1883))
 EVENT_TOPIC = os.environ.get("VENIVIDIVICI_EVENT_TOPIC", "event/node-discovered")

@@ -1,16 +1,6 @@
 ---
-# Trusts the Zot registry's self-signed CA (registry/README.md) for image
-# pulls via k3s's embedded containerd.
-#
-# Expects `registry_ca_cert_path` (a file on the *controller*, not any Pi -
-# see group_vars/all.yml) and `registry_host` (must exactly byte-match the
-# host:port used in image references; containerd does not normalize this
-# key) from group_vars/all.yml, and `k3s_service_name` from the calling
-# play (k3s on the manager, k3s-agent on workers).
-#
-# Prerequisite this cannot do for you: `registry_ca_cert_path` must already
-# exist on the controller. Generate it per registry/README.md before running
-# this - there's no sensible fallback if the CA hasn't been created yet.
+# Trusts the Zot registry's self-signed CA for containerd. registry_ca_cert_path must already
+# exist on the controller - see registry/README.md to generate it.
 
 - name: Ensure /etc/rancher/k3s exists
   ansible.builtin.file:
@@ -42,12 +32,7 @@
             ca_file: /etc/rancher/k3s/registry-ca.crt
   register: registries_config
 
-# k3s only reads registries.yaml (and the certs it points to) at startup, so
-# a change here is inert until the service restarts - same reasoning as the
-# batman restart-on-change fix in 00_configure_network_common.yml: without
-# this, only nodes provisioned fresh would ever pick up a cert/config
-# change, and an already-running node would keep silently rejecting the
-# registry's cert.
+# k3s only reads registries.yaml at startup; a change here is inert until the service restarts.
 - name: Restart {{ k3s_service_name }} to pick up registry trust changes
   ansible.builtin.systemd:
     name: "{{ k3s_service_name }}"

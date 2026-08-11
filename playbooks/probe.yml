@@ -1,15 +1,6 @@
 ---
-# Task list only (no hosts/become/vars/handlers) - loaded via include_tasks
-# from the "Configure network prober" play in provision_all.yml, which
-# supplies those.
-#
-# Replaces the old bash network_prober.sh with the C prober
-# (../../../prober/). That switch dropped the gRPC path entirely (was
-# already dead/commented out in the bash version), iperf3 (throughput is
-# now a custom UDP protocol - see prober/context_for_claude.txt - so the
-# iperf3 server this play used to start is no longer needed), and
-# mosquitto-clients/jq (the C prober speaks MQTT and builds JSON itself,
-# see prober/src/mqtt.c and prober/src/linkpublish.c).
+# Task list, loaded via include_tasks from provision_all.yml's "Configure network prober" play.
+# Deploys the C prober from the sibling prober/ repo.
 
 - name: Ensure nameserver is configured
   ansible.builtin.lineinfile:
@@ -17,20 +8,7 @@
     line: "nameserver {{ fallback_dns }}"
     state: present
 
-# network_prober.sh's get_neighbors() relied on batctl resolving MACs to
-# node names via /etc/bat-hosts - the C prober no longer needs the file for
-# its own peer table (it always asks neighbors directly via a multicast
-# DISCOVER packet, see prober/src/discover.c, since the file isn't
-# guaranteed complete) and instead keeps the file in sync FROM what it
-# learns on the wire (prober/src/bathosts.c). This task now only matters as
-# a bootstrap seed - so /etc/bat-hosts (and batctl's own use of it for
-# `batctl o` display) isn't empty before the prober's first discovery round
-# - and as a fallback for anything else on the node that still reads it.
-# Every host computes the same bat_hosts_content independently (rather than
-# a run_once + hostvars[] indirection) so this doesn't depend on every host
-# reaching this task in the same forks batch - relies on ansible.cfg's
-# forks being >= the fleet size so every host has already set its own
-# bat_mac fact by the time any host reads the others' via hostvars.
+# Bootstrap seed for /etc/bat-hosts; the prober keeps it in sync itself afterward.
 - name: Get wlan0 MAC address
   ansible.builtin.command: cat /sys/class/net/wlan0/address
   register: wlan_mac
@@ -46,12 +24,7 @@
   register: existing_bat_hosts
   failed_when: false
 
-# groups['all'] only holds hosts the dynamic inventory could reach this run
-# (see inventories/discover.py) - a powered-off node is dropped entirely, not
-# just marked unreachable. Overwriting from groups['all'] alone would erase
-# its MAC->name entry every time any node is down. Merge onto whatever this
-# host already has on disk instead, so down nodes' entries survive; live
-# entries win on conflict since they're fresher than whatever's on disk.
+# Merge onto the existing file so a powered-off node's entry survives; live entries win on conflict.
 - name: Parse existing bat-hosts entries
   ansible.builtin.set_fact:
     bat_hosts_map: "{{ bat_hosts_map | default({}) | combine({(item.split(' ')[0]): item.split(' ')[1]}) }}"
@@ -80,14 +53,7 @@
     mode: "0644"
   notify: Restart network_prober
 
-# The pi never builds anything - it has no toolchain and no source. The
-# binary is cross-compiled once, here, on the control node (see
-# prober/Dockerfile - real cross-compiler, no QEMU) and only the resulting
-# arm64 static executable is shipped out. Fixes two prior incidents from
-# copying src/ wholesale and building on-device: dragging .git over the
-# slow mesh link, and stray x86_64 .o files from a local `make` linking
-# into a broken ARM binary. Also means 16 pis no longer each burn CPU/time
-# compiling the identical source.
+# Cross-compiled once on the control node; only the arm64 binary ships out.
 - name: Cross-compile prober for arm64
   delegate_to: localhost
   become: false
@@ -128,11 +94,7 @@
       WorkingDirectory=/home/pi/prober
       Restart=always
       RestartSec=10
-      # Soft CPU priority boost via the standard (fully preemptible) CFS
-      # scheduler - insurance against colocated pods (mosquitto, inference
-      # workloads) CPU-starving the prober, without the failure mode of a
-      # real-time scheduling class wedging the node if the prober itself
-      # misbehaves.
+      # Soft CPU priority boost so colocated pods can't starve the prober.
       Nice=-10
       Environment="NODE_ID={{ inventory_hostname }}"
       Environment="IFACE=wlan0"
@@ -146,10 +108,7 @@
       Environment="LOG_DIR=/logs"
       Environment="MAX_SIZE_KB={{ fieldlog_max_size_kb }}"
       Environment="LOG_ALL_ROUTES={{ fieldlog_all_routes }}"
-      # Read-only here - fieldlog-resource.service's RuntimeDirectory owns
-      # /run/fieldlog's lifecycle. This service keeps running regardless
-      # (MQTT publish must never depend on a session being active); it only
-      # uses the marker to decide whether to also write network/route CSVs.
+      # Read-only here; MQTT publish must never depend on a logging session being active.
       Environment="SESSION_MARKER=/run/fieldlog/session_id"
       Environment="MQTT_HOST={{ mqtt_host }}"
       Environment="MQTT_PORT={{ mqtt_port }}"

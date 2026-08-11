@@ -8,30 +8,9 @@ INTERVAL="${INTERVAL:-5}"
 MAX_SIZE_KB="${MAX_SIZE_KB:-10240}"
 SESSION_MARKER="${SESSION_MARKER:-/run/fieldlog/session_id}"
 
-# One session = one start-logging/stop-logging cycle across the whole
-# fleet, identified by a single id (laptop clock, not each node's own) -
-# `make start-logging` sets FIELDLOG_SESSION_ID via `systemctl
-# set-environment` before starting this service, so a normal run and a
-# LIMIT=<host> retry to rejoin a failed node both land on the *same* id
-# instead of each node minting its own from a slightly different (and
-# possibly clock-drifted, see sync_time.yml) local start time.
-#
-# Not SESSION_MARKER for this: fieldlog-resource.service's
-# RuntimeDirectory=fieldlog recreates /run/fieldlog - wiping any
-# pre-existing contents - every time systemd (re)starts the unit, not just
-# when it stops. A marker written by ansible *before* `systemctl start`
-# raced that wipe and always lost, silently falling back to self-minting.
-# The environment var lives in the systemd manager's own process, so it
-# survives the directory wipe. SESSION_MARKER is still where *this script*
-# publishes whatever id it resolved, every start - the network prober reads
-# it to scope its own CSVs to the same session and to know whether a
-# session is active at all - and it's still what a bare manual `systemctl
-# start` (no env var set) falls back to reusing, then finally self-mints if
-# neither is present.
-# fieldlog-resource.service's RuntimeDirectory=fieldlog creates and -
-# critically - removes /run/fieldlog around this script's lifetime, so the
-# marker (and the "session active" signal) disappears on stop, crash, or
-# SIGKILL alike, with no trap needed.
+# FIELDLOG_SESSION_ID (set via `systemctl set-environment` by make start-logging) gives every
+# node the same session id. SESSION_MARKER is where this script publishes it for the prober to
+# read, and survives only for the service's lifetime (RuntimeDirectory=fieldlog wipes it on stop).
 SESSION_ID="${FIELDLOG_SESSION_ID:-}"
 if [ -z "$SESSION_ID" ]; then
   SESSION_ID="$(cat "$SESSION_MARKER" 2>/dev/null)"
@@ -44,8 +23,7 @@ echo "$SESSION_ID" >"$SESSION_MARKER"
 LOG_FILE="$LOG_DIR/$NODE_ID-resource-$SESSION_ID.csv"
 HEADER="timestamp,load1,load5,load15,mem_used_kb,mem_total_kb,temp_c,throttled"
 
-# Single-generation rotation (current -> .old, fresh file with header) -
-# bounds disk use on the SD card without needing logrotate as a dependency.
+# Single-generation rotation (current -> .old); bounds disk use without logrotate.
 rotate_if_needed() {
   [ -f "$LOG_FILE" ] || return
   local size_kb

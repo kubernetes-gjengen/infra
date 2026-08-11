@@ -1,9 +1,5 @@
 ---
-# Included unconditionally for every worker (see provision_all.yml).
-# Installs a stable /dev/gps0 udev symlink so ../gps-client's DaemonSet can
-# mount one hostPath fleet-wide regardless of whether a given node's GPS is
-# a USB dongle or a Dragino HAT's onboard UART - the rule template itself
-# covers both device names, so no per-host declaration decides this.
+# Installs a stable /dev/gps0 udev symlink so gps-client can mount one hostPath fleet-wide.
 
 - name: Install stable /dev/gps0 udev rule for this host's GPS hardware
   ansible.builtin.template:
@@ -12,10 +8,7 @@
     mode: "0644"
   register: gps_udev_rule
 
-# No reboot needed - the underlying device (ttyUSB0/ttyAMA0) already exists
-# by this point in the run; just reload the rule and re-trigger. Two
-# separate command tasks since ansible.builtin.command doesn't go through a
-# shell (no && support).
+# Two tasks since ansible.builtin.command doesn't go through a shell (no && support).
 - name: Reload udev rules
   ansible.builtin.command: udevadm control --reload-rules
   changed_when: true

@@ -21,33 +21,9 @@
     group: root
     mode: "0755"
 
-# Node lifecycle controller's disruption-protection defaults assume a large
-# cluster: for zones <= large-cluster-size-threshold (default 50), a
-# FullDisruption/PartialDisruption zone state (>=unhealthy-zone-threshold,
-# default 55%, of nodes NotReady at once) drops the eviction rate to *zero*
-# instead of secondary-node-eviction-rate - it assumes that's a network
-# partition, not real node failure, and freezes eviction until enough nodes
-# come back. Our 5-node cluster is always "small" against that default, so
-# powering off enough Pis at once (the exact MANET scenario this project
-# tests) permanently wedges pod eviction until every node reports Ready
-# again - pods on still-down nodes stay "Running" in the API forever, so
-# nothing (default or custom scheduler) ever gets a chance to reschedule
-# them. large-cluster-size-threshold=0 makes the controller always take the
-# secondary-rate branch instead of the zero branch; secondary-node-eviction-rate
-# is raised from its slow default (0.01/s, ~1 pod/100s) to match the normal
-# rate so eviction after a partition stays fast, matching the tolerationSeconds
-# already set on workload pods (see mosquitto.yml, zot.yml, homepage.yml,
-# venividivici.yaml).
-#
-# terminated-pod-gc-threshold: separate issue from the above - PodGC only
-# deletes terminal (Evicted/Failed/Succeeded) pod objects once their count
-# passes this threshold, default 12500. That's tuned for large clusters and
-# never fires here, so a pod that keeps getting evicted and recreated on the
-# same pinned node (e.g. hardware-bound pods like radio-processor, which can
-# only ever schedule onto the one Pi with the radio attached) leaves an
-# ever-growing pile of dead pod objects behind instead of being cleaned up.
-# We run ~10 pods at once at most, so 10 is already generous headroom before
-# GC kicks in.
+# Default k3s disruption-protection freezes eviction once >=55% of nodes go NotReady at
+# once - exactly what powering off Pis does in this MANET testbed. These settings keep
+# eviction fast and let PodGC clean up dead pod objects at our much smaller pod count.
 - name: Deploy k3s server config (fast eviction + prompt terminal-pod GC)
   ansible.builtin.copy:
     dest: /etc/rancher/k3s/config.yaml
@@ -88,11 +64,7 @@
   register: join_token
   changed_when: false
 
-# Scopes *.gotham resolution for pods to the manager's dnsmasq - see
-# ../../coredns/coredns-custom.yml for why this is needed (CoreDNS's default
-# forward-to-/etc/resolv.conf doesn't work from its pod netns). k3s watches
-# this manifest dir and auto-applies/re-applies it, so this survives
-# reprovisioning without a separate kubectl step.
+# k3s watches this manifest dir and auto-applies it, so no separate kubectl step is needed.
 - name: Deploy CoreDNS custom config (forward *.gotham to dnsmasq)
   ansible.builtin.copy:
     src: "{{ playbook_dir }}/../coredns/coredns-custom.yml"

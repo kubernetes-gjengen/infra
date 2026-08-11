@@ -1,10 +1,5 @@
 ---
-# Configures batman-adv + the netplan profile for bat0/eth0.
-#
-# The manager's static bat0 address comes from `manager_mesh_ip`
-# (group_vars/all.yml); workers get bat0 via DHCP from the manager. This file
-# only *renders* the netplan config and registers `netplan_cfg` - the calling
-# play runs `netplan apply` afterwards so it can handle the connection drop.
+# Configures batman-adv and renders the netplan profile; the calling play runs `netplan apply`.
 
 - name: Install dependencies
   ansible.builtin.apt:
@@ -77,14 +72,7 @@
     enabled: true
     state: started
 
-# batman.service is Type=oneshot with RemainAfterExit=yes, so on an
-# already-provisioned node it's sitting at `active (exited)` and the
-# `state: started` above is a no-op even when the script/unit content just
-# changed underneath it (e.g. a routing-algorithm switch) - systemd doesn't
-# re-run a oneshot just because its ExecStart file changed. Without this,
-# only nodes provisioned fresh (or manually rebooted) would ever pick up a
-# script change; already-running nodes would silently keep whatever
-# algorithm/config was active since their last start, splitting the mesh.
+# state: started is a no-op on an already-exited oneshot unit, even if its script content changed.
 - name: Restart batman service to pick up script/unit changes
   ansible.builtin.systemd:
     name: batman
@@ -104,13 +92,7 @@
     mode: "0600"
   register: netplan_cfg
 
-# manager0.{{ gotham_domain }} is used by both containerd (image pulls from
-# Zot) and the k3s agent (join URL). It resolves via bat0 DHCP → dnsmasq, but
-# bat0 comes up after eth0 and there is a startup race: containerd may
-# attempt its first pull before systemd-resolved has bat0's DNS configured,
-# getting EAI_AGAIN. /etc/hosts has no dependency on interface state, so
-# this entry wins regardless of which interfaces are up. manager_mesh_ip is
-# the manager's fixed bat0 address, defined in group_vars/all.yml.
+# bat0 comes up after eth0; containerd can hit this DNS name before bat0's resolver is ready.
 - name: Pin manager0.{{ gotham_domain }} in /etc/hosts (prevents DNS race on containerd startup)
   ansible.builtin.lineinfile:
     path: /etc/hosts

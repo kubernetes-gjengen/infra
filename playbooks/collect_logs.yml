@@ -1,17 +1,7 @@
 ---
 # Usage: ansible-playbook collect_logs.yml -e collect_dir=/abs/path
-#
-# Best-effort log fetch: a node that dropped off the mesh mid-experiment is
-# skipped, not treated as a failure - that's expected during field tests,
-# not an error condition.
-#
-# All fetches use ansible.posix.synchronize (rsync) instead of find+fetch
-# loops, for a single result line per node instead of one per file.
-# use_ssh_args: true is required (ansible.posix defaults it to false) so
-# synchronize's own ssh invocation picks up discover.py's per-host
-# ansible_ssh_common_args - without it, nodes only reachable via the
-# manager0 mesh ProxyCommand (worker7/9/10/11's ".gotham" hostnames, see
-# discover.py's mesh_proxy_ssh_args) fail with "Could not resolve hostname".
+# Best-effort: a node dropped off the mesh mid-experiment is skipped, not a failure.
+# use_ssh_args: true is required so synchronize picks up discover.py's mesh ProxyCommand for .gotham-only hosts.
 
 - name: Collect field-test logs from all nodes
   hosts: all
@@ -21,10 +11,7 @@
     collect_dir: "{{ playbook_dir }}/../collected-logs/manual"
 
   tasks:
-    # rsync (unlike ansible.builtin.fetch) only creates one missing leaf
-    # directory, not the full path - collect_dir's timestamped parent won't
-    # exist yet on a fresh collection run, so the synchronize tasks below
-    # need this created first or their first-ever mkdir fails.
+    # rsync only creates one missing leaf directory; the parent must exist first.
     - name: Ensure local per-node collect directory exists
       ansible.builtin.file:
         path: "{{ collect_dir }}/{{ inventory_hostname }}"
@@ -32,20 +19,7 @@
         mode: "0755"
       delegate_to: localhost
 
-    # rsync pull (one task/one result line per node, instead of a find +
-    # looped-fetch that printed a line per file) filtered to this host's own
-    # hostname prefix, not a bare "*.csv*" - a physical Pi that was ever
-    # relabeled by discover.py's MAC-based naming (e.g. when the
-    # worker9/10/11 hardware got auto-enrolled and reshuffled assignments)
-    # keeps its previous identity's CSVs sitting in /logs forever; NODE_ID
-    # only changes what *new* files get named, it doesn't clean up old ones.
-    # An unscoped pull would sweep those up too and attribute another node's
-    # historical data to this one.
-    #
-    # ignore_errors for the same reason as the unreachable-node case above:
-    # the network prober (see probe.yml) writes to these files continuously,
-    # so a file caught mid-write is expected raciness on a live log, not a
-    # failure worth aborting over.
+    # Scoped to this host's own hostname prefix so a MAC-relabeled node doesn't sweep up another node's old CSVs.
     - name: Fetch fieldlog CSVs
       ansible.posix.synchronize:
         mode: pull
@@ -58,25 +32,7 @@
       ignore_unreachable: true
       ignore_errors: true
 
-    # k8-scheduler (manager0 only) isn't a fieldlog CSV - it's a k8s cluster
-    # component logging continuously via journald, unrelated to
-    # start-logging/stop-logging. journald already persists and rotates it
-    # (systemd-managed, no extra writer/service needed), so this just reads
-    # it on demand at collection time - zero standing overhead added by
-    # collecting it. -o json gives a reliable per-line epoch timestamp
-    # (__REALTIME_TIMESTAMP); the scheduler's own embedded "time=15:04:05"
-    # field has no date and isn't safe to rely on alone.
-    #
-    # --since bounds this to scheduler_log_window (group_vars/all.yml) -
-    # without it this pulls the scheduler's *entire* journal history on
-    # every single collection (measured: 381MB / 339k lines for ~2 days at
-    # log_level=debug), not just the current experiment.
-    #
-    # become: true (unlike the CSV tasks above, which rely on /logs being
-    # world-writable) - journalctl needs root to read the system journal,
-    # and writing to /tmp needs to consistently be the same user each run or
-    # a stale file from a differently-privileged run blocks the next one
-    # with a silent (failed_when: false) permission error.
+    # --since bounds this to scheduler_log_window; without it this pulls the entire journal history every time.
     - name: Dump k8-scheduler journal
       ansible.builtin.shell: journalctl -u k8-scheduler -o json --no-pager --since "{{ scheduler_log_window }}" > /tmp/{{ inventory_hostname }}-scheduler.jsonl
       become: true
@@ -94,39 +50,9 @@
       ignore_unreachable: true
       ignore_errors: true
 
-    # radio-wrapper (radio-receiver/radio-processor) app pod logs. These are
-    # NOT streamed anywhere during the experiment - kubelet already writes
-    # every container's stdout to this node's own local disk as a normal
-    # part of running the pod, same as any other container runtime. Reading
-    # that file over SSH after the fact costs nothing during the run itself;
-    # `kubectl logs`, by contrast, streams via the k3s API server, which for
-    # a pod scheduled on a *worker* means relaying the whole log through the
-    # batman-adv mesh to manager0 and out to the operator's laptop for the
-    # entire experiment - exactly the kind of extra mesh traffic a
-    # network-baseline field test can't afford. Queried on every node (not
-    # just wherever the pod happens to be right now) since a replicas=1
-    # deployment can be rescheduled to a different node mid-experiment, and
-    # the file for whichever node it left behind still needs collecting.
-    # become: true - only root/the container runtime's group can read these.
-    # Deliberately ansible.builtin.find+fetch, not synchronize like the CSV
-    # task above: rsync can only escalate on the *remote* end via
-    # --rsync-path="sudo rsync", which has no way to supply a password and
-    # so hard-requires true passwordless sudo on every node. That's not
-    # something this repo provisions or guarantees (it's inherited from
-    # each Pi's base image) - worker7 was found missing it, breaking this
-    # task while 6/7 other nodes worked fine. find+fetch goes through
-    # ansible's own become, which can push ansible_become_pass over a pty,
-    # so it doesn't share that hard dependency. Verbosity is a non-issue
-    # here unlike the CSV task above - at most one file per pod per node.
-    # file_type: link is required - /var/log/containers/*.log entries are
-    # symlinks to /var/log/pods/.../N.log (standard kubelet/containerd
-    # layout), and find's default file_type: file flatly excludes symlinks
-    # from matching at all (regardless of the unrelated `follow` option,
-    # which only affects recursing into symlinked *directories*). Without
-    # this, found_app_logs.files is always empty and the fetch task below
-    # always skips - a pre-existing bug, never triggered before now because
-    # the radio-wrapper containers had never actually run in a session with
-    # log collection until this one.
+    # Reads kubelet's local log file directly instead of `kubectl logs`, which would relay it over the mesh.
+    # find+fetch, not synchronize: rsync needs passwordless sudo on the remote end, which isn't guaranteed on every node.
+    # file_type: link is required - these paths are symlinks, and find's default excludes symlinks.
     - name: Find radio-wrapper app pod container logs
       ansible.builtin.find:
         paths: /var/log/containers
@@ -139,11 +65,7 @@
       ignore_unreachable: true
       ignore_errors: true
 
-    # ansible.builtin.fetch reads through the path with a normal open(),
-    # which transparently follows a symlink to its target content - unlike
-    # rsync's archive mode (see the CSV task's sibling above), no extra
-    # option is needed here to get real log content instead of a dangling
-    # link.
+    # fetch follows the symlink transparently; no extra option needed.
     - name: Fetch radio-wrapper app pod container logs
       ansible.builtin.fetch:
         src: "{{ item.path }}"

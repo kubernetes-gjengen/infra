@@ -1,15 +1,9 @@
 #!/usr/bin/env bash
 set -uo pipefail
-# JSON always uses '.' as the decimal separator; force it regardless of the
-# operator's locale so printf's %f formatting doesn't choke on it (e.g. a
-# comma-decimal locale rejects "94.328" as "invalid number").
+# Force '.' as decimal separator regardless of locale, for printf's %f formatting.
 export LC_NUMERIC=C
 
-# Live table of mesh link latency/throughput, sourced from the same
-# network/linkdata MQTT topic the network prober (on each Pi) publishes to.
-# The broker is a k3s NodePort service, reachable from any node - including
-# a laptop on the wired setup subnet - at <any-node>:MQTT_PORT.
-#
+# Live table of mesh link latency/throughput, sourced from the network prober's MQTT topic.
 # Usage: watch_links.sh [refresh_seconds]
 
 REFRESH="${1:-3}"
@@ -36,7 +30,6 @@ for dep in mosquitto_sub jq; do
   }
 done
 
-# manager0 -> m0, worker12 -> w12, anything else passed through unshortened.
 shorten() {
   case "$1" in
   manager*) echo "m${1#manager}" ;;

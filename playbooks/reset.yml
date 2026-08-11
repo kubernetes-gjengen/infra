@@ -1,21 +1,9 @@
 ---
-# Tears down all provisioning on every node and returns them to a clean
-# stock state. Safe to run on a partially provisioned cluster — every task is
-# guarded with failed_when: false or stat checks.
+# Tears down all provisioning and returns every node to stock state. Order:
+# k3s agents before k3s server, batman before interfaces, dnsmasq before resolved, reboot last.
 #
-# Order matters:
-#   1. k3s agents (workers) before k3s server (manager)
-#   2. batman.service stopped before interface teardown
-#   3. dnsmasq removed before systemd-resolved is restored
-#   4. Reboot last to flush remaining kernel state
-#
-# One-off, opt-in only (tagged `never`, so a normal run skips it):
-#   ansible-playbook reset.yml --tags cleanup_eth0
-# Fixes nodes provisioned before the eth0 flush was added to
-# provision_all.yml, where NetworkManager's original DHCP lease was never
-# released when systemd-networkd took over, leaving eth0 with two addresses.
-# A full reset+reboot also clears this, but that's a heavy hammer for nodes
-# that are otherwise fine.
+# --tags cleanup_eth0 (opt-in, tagged never) fixes leftover dual-IP eth0 on
+# nodes provisioned before the eth0 flush existed in provision_all.yml.
 - name: Flush stale eth0 address left over from NetworkManager->networkd handoff
   hosts: all
   become: true
@@ -89,8 +77,7 @@
   gather_facts: false
 
   tasks:
-    # Stop the service before tearing down the interfaces it manages,
-    # so it cannot re-run and undo the teardown mid-play.
+    # Stop the service first so it can't undo the teardown mid-play.
     - name: Stop and disable batman service
       ansible.builtin.systemd:
         name: batman
@@ -122,22 +109,14 @@
       ansible.builtin.command: iwconfig wlan0 mode managed
       failed_when: false
 
-    # Remove the netplan profile that provisioning deployed. Leaving it in place
-    # would cause systemd-networkd to error on bat0 (non-existent) on the next
-    # boot, and would prevent NetworkManager from managing eth0.
+    # Leaving this breaks the next boot: networkd errors on the missing bat0 and blocks NetworkManager from owning eth0.
     - name: Remove netplan batman profile
       ansible.builtin.file:
         path: "{{ item }}"
         state: absent
       loop:
         - /etc/netplan/90-netplan-batman.yaml
-        # Pre-rename leftover: this used to be the deploy destination before
-        # it was renamed to 90-netplan-batman.yaml. Nodes provisioned before
-        # that rename still carry it, and reset never cleaned it up because
-        # it only knew the new name. Its `renderer: networkd` makes netplan's
-        # systemd generator force systemd-networkd to enabled-runtime at
-        # boot regardless of the enabled:false below, so it fights
-        # NetworkManager for eth0 and the node ends up with two DHCP leases.
+        # Pre-rename leftover name, still present on nodes provisioned before the rename.
         - /etc/netplan/90-netplan-workers.yaml
 
     - name: Remove batctl and wireless-tools packages
@@ -152,16 +131,12 @@
         path: /usr/local/bin/config_batman.sh
         state: absent
 
-    # Disable networkd so it does not start after the reboot at the end of this
-    # playbook. Do NOT stop it now — it owns eth0 (our SSH path) and stopping
-    # it mid-play would drop the connection. The transition to NetworkManager
-    # happens cleanly on the reboot that closes out the reset run.
+    # Disable only, don't stop now - networkd owns eth0 (the SSH path); the switch happens on the closing reboot.
     - name: Disable systemd-networkd (takes effect on next boot)
       ansible.builtin.systemd:
         name: systemd-networkd
         enabled: false
 
-    # Mark NetworkManager and wpa_supplicant to start on next boot.
     - name: Enable NetworkManager
       ansible.builtin.systemd:
         name: NetworkManager
@@ -272,15 +247,8 @@
   gather_facts: false
 
   tasks:
-    # Capability labels (capability/gps=true etc., set by
-    # tasks/detect_capabilities.yml) need no explicit teardown here - they
-    # live entirely in k3s's own API state, which the k3s
-    # uninstall(-agent)?.sh scripts above already wipe.
-    # avahi-daemon ships preinstalled on stock Pi OS, so this playbook never
-    # stops, disables, or removes it - it isn't provisioning's to tear down.
-    # That's also what lets the final reboot play below reconnect via
-    # <hostname>.local, since eth0 reverts to plain NetworkManager DHCP as
-    # part of this reset and can come back with a different address.
+    # Capability labels need no explicit teardown - the k3s uninstall scripts above already wipe that API state.
+    # avahi-daemon ships preinstalled and is never touched, so the closing reboot can still reconnect via mDNS.
     - name: Stop and disable network_prober and iperf3 services
       ansible.builtin.systemd:
         name: "{{ item }}"
@@ -303,13 +271,7 @@
       ansible.builtin.systemd:
         daemon_reload: true
 
-    # Mirrors the batctl/wireless-tools removal in the batman play and the
-    # dnsmasq removal in the DHCP/DNS play - packages installed solely for
-    # a provisioning feature that this playbook tears down. Does NOT
-    # include iptables/systemd-resolved: both are still relied on by the
-    # DNS-restore and NAT-flush tasks elsewhere in this playbook, so
-    # removing them here would fight those. avahi-daemon is also excluded -
-    # see the note on the reboot play below for why.
+    # Excludes iptables/systemd-resolved (still used by tasks elsewhere here) and avahi-daemon (needed for the closing reboot).
     - name: Remove packages installed for provisioning features (network prober, capability detection)
       ansible.builtin.apt:
         name:
@@ -329,10 +291,7 @@
         path: /etc/cloud/cloud-init.disabled
         state: absent
 
-    # blockinfile state: absent removes exactly the marked block this repo
-    # added, leaving the rest of each .bashrc untouched. Guarded in case
-    # the "Set hostname on all nodes" play never ran on a partially
-    # provisioned node.
+    # Guarded in case the "Set hostname on all nodes" play never ran on this node.
     - name: Remove custom PS1 prompt from /root/.bashrc
       ansible.builtin.blockinfile:
         path: /root/.bashrc
@@ -385,14 +344,7 @@
   gather_facts: false
 
   tasks:
-    # eth0 is back on plain NetworkManager DHCP at this point, which can
-    # hand out a different address across a reboot. Reconnecting via
-    # <hostname>.local instead of the pre-reboot ansible_host means the
-    # address change doesn't matter - avahi-daemon ships preinstalled and
-    # running on stock Pi OS and this playbook never touches it (see above),
-    # so it's still there to answer for it under whatever IP it lands on.
-    # Without this, the reboot module polls the stale pre-reboot IP and
-    # times out for good the moment DHCP hands out something different.
+    # eth0 can get a new DHCP address across reboot; reconnect via mDNS instead of the stale pre-reboot IP.
     - name: Reconnect over mDNS for the reboot
       ansible.builtin.add_host:
         name: "{{ inventory_hostname }}"
@@ -400,8 +352,6 @@
 
     - name: Reboot
       ansible.builtin.reboot:
-        # Observed real boot time is ~130-145s across the fleet, past the old
-        # 120s timeout - every host still rebooted fine, Ansible just gave up
-        # waiting a few seconds too early.
+        # Real boot time runs ~130-145s across the fleet, past the old 120s timeout.
         reboot_timeout: 240
         post_reboot_delay: 10

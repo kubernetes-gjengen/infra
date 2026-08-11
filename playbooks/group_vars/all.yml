@@ -1,99 +1,49 @@
 ---
-# Values here are read from the repo-root .env (see .env.example) via
-# lookup('env', ...), falling back to the same default shown alongside each
-# lookup if .env isn't sourced into the environment - so `ansible-playbook`
-# run directly (not via `make`, which sources .env for you - see the
-# Makefile's WITH_ENV) still works unmodified. Security has not been
-# prioritized for the credential-shaped values here (see .env.example).
+# Read from repo-root .env, falling back to the defaults shown below.
 
-# Single source of truth for the mesh gateway.
-#
-# The manager holds this fixed address on bat0 and runs the DHCP/DNS server
-# (dnsmasq). Workers lease their own bat0 address from it, so the manager's
-# is the only mesh IP that must be pinned down anywhere.
 manager_mesh_ip: "{{ lookup('env', 'MESH_MANAGER_IP') | default('192.168.42.1', true) }}"
 
-# DHCP pool the manager's dnsmasq hands out to workers on bat0 (consumed by
-# the "Configure DHCP/DNS on manager" play in provision_all.yml).
+# DHCP pool the manager's dnsmasq hands out to workers on bat0.
 mesh_dhcp_start: "{{ lookup('env', 'MESH_DHCP_START') | default('192.168.42.2', true) }}"
 mesh_dhcp_end: "{{ lookup('env', 'MESH_DHCP_END') | default('192.168.42.254', true) }}"
 mesh_dhcp_lease_hours: "{{ lookup('env', 'MESH_DHCP_LEASE_HOURS') | default('12', true) }}"
 
-# Manager's static eth0 address for a no-router field setup (laptop's
-# ethernet plugged directly into the manager, nothing handing out DHCP on
-# that link). Empty (default) keeps eth0 on dhcp4 - the normal
-# router/switch-on-the-wired-LAN case, unchanged. Set together with
-# WIRED_SCAN_SUBNET so discover.py's ARP scan matches the subnet this
-# actually puts eth0 on. templates/90-netplan-workers.yml.j2 consumes this;
-# only applies to the manager - workers don't need a wired address at all
-# once already provisioned (they're reached over the mesh, see
-# discover.py's mesh-proxy fallback).
+# Manager's static eth0 IP for a no-router field setup; empty keeps eth0 on DHCP.
 manager_wired_ip: "{{ lookup('env', 'MANAGER_WIRED_IP') | default('', true) }}"
 
-# Derived from manager_mesh_ip's first 3 octets, not its own env var - the
-# repo otherwise only uses ansible.builtin (no ipaddr filter / netcommon
-# collection available), so this is plain string manipulation rather than a
-# real subnet-mask calculation. Correct for the /24 this repo actually runs
-# (mesh_dhcp_start/end above), and stays consistent with manager_mesh_ip if
-# that's ever overridden. Used by tasks/configure_ntp.yml's chrony `allow`.
+# Derived from manager_mesh_ip; used by chrony's `allow` directive.
 mesh_subnet_cidr: "{{ manager_mesh_ip.split('.')[0:3] | join('.') }}.0/24"
 
-# wlan0 ad-hoc mesh radio config (shellscripts/config_batman2_electric_boogaloo.sh,
-# templated into its systemd Environment= lines by 00_configure_network_common.yml).
+# wlan0 ad-hoc mesh radio config.
 mesh_ssid: "{{ lookup('env', 'MESH_SSID') | default('meshnet', true) }}"
 mesh_channel: "{{ lookup('env', 'MESH_CHANNEL') | default('1', true) }}"
 
-# DNS suffix for the manager's dnsmasq - templates/dnsmasq.conf.j2,
-# tasks/configure_dhcp_server.yml's systemd-resolved search domain.
+# DNS suffix served by the manager's dnsmasq.
 gotham_domain: "{{ lookup('env', 'GOTHAM_DOMAIN') | default('gotham', true) }}"
 
-# k3s API server port - kubeconfig.yml, K3S_URL in install_k3s_worker.yml,
-# the k3s.yaml loopback-address substitution in provision_all.yml.
 k3s_api_port: "{{ lookup('env', 'K3S_API_PORT') | default('6443', true) }}"
 
-# Applied to every node (tasks/configure_timezone.yml) so cross-node log
-# timestamps line up.
+# Applied to every node so cross-node log timestamps line up.
 cluster_timezone: "{{ lookup('env', 'CLUSTER_TIMEZONE') | default('Europe/Oslo', true) }}"
 
-# Nameserver used where a node needs one outside the mesh's own dnsmasq
-# (probe.yml's resolv.conf fallback, configure_bashrc_prompt.yml's "what's
-# my outbound IP" route probe).
+# Nameserver used outside the mesh's own dnsmasq.
 fallback_dns: "{{ lookup('env', 'FALLBACK_DNS') | default('1.1.1.1', true) }}"
 
-# Zot registry (registry/zot.yml) trust config, consumed by
-# tasks/configure_registry_trust.yml. registry_ca_cert_path is read from the
-# *controller's* home directory - see registry/README.md for how it's
-# generated; it's never committed to the repo.
-#
-# registry_host must exactly byte-match the host:port every image reference
-# in the cluster uses (containerd's registries.yaml key isn't normalized).
-# manager0.gotham is dnsmasq's DNS name for the manager's fixed mesh IP
-# (templates/dnsmasq.conf.j2), already relied on elsewhere in this playbook
-# for the same reason (K3S_URL in tasks/install_k3s_worker.yml) - it
-# survives the manager's wired IP changing, unlike a bare IP address.
+# Controller-local CA path (see registry/README.md), never committed.
 registry_ca_cert_path: "{{ lookup('env', 'HOME') }}/certs/registry-ca.crt"
 registry_hostname: "{{ lookup('env', 'REGISTRY_HOST') | default('manager0.gotham', true) }}"
 registry_port: "{{ lookup('env', 'REGISTRY_PORT') | default('30500', true) }}"
+# Must byte-match every image reference in the cluster.
 registry_host: "{{ registry_hostname }}:{{ registry_port }}"
 
-# Field-test logging (tasks/setup_logging.yml, fieldlog_resource.sh). Kept
-# low-frequency/size-capped by default since it runs on the same SD card as
-# the OS - bump fieldlog_interval down for short high-resolution runs.
+# Field-test logging cadence and rotation cap (fieldlog_resource.sh).
 fieldlog_interval: "{{ lookup('env', 'FIELDLOG_INTERVAL') | default('5', true) }}"
 fieldlog_max_size_kb: "{{ lookup('env', 'FIELDLOG_MAX_SIZE_KB') | default('10240', true) }}"
 
-# prober's LOG_ALL_ROUTES: false = don't write the peer-table dump CSV at
-# all; true = one row per known peer (incl. throughput-demoted/absent, not
-# just currently-eligible ones) every discovery_interval - much higher row
-# count, only turn on for close mesh-connectivity debugging. Redefined from
-# the old bash script's batman nexthop-routing dump now that the prober
-# measures wlan0 directly and no longer reads batman's routing table at all
-# (see prober/src/discover.c).
+# true logs every candidate route, not just the chosen one - debugging only.
 fieldlog_all_routes: "{{ lookup('env', 'FIELDLOG_ALL_ROUTES') | default('false', true) }}"
 
-# C prober tuning (probe.yml's systemd Environment= lines) - defaults here
-# match prober/config.ini; override via env if a field test needs different
-# cadence. See prober/inc/config.h for the full old-script-env-var mapping.
+# C prober tuning; defaults match prober/config.ini.
 prober_port: "{{ lookup('env', 'PROBER_PORT') | default('5210', true) }}"
 prober_latency_interval: "{{ lookup('env', 'PROBER_LATENCY_INTERVAL') | default('5', true) }}"
 prober_latency_samples: "{{ lookup('env', 'PROBER_LATENCY_SAMPLES') | default('5', true) }}"
@@ -102,25 +52,10 @@ prober_throughput_duration_ms: "{{ lookup('env', 'PROBER_THROUGHPUT_DURATION_MS'
 prober_discovery_interval: "{{ lookup('env', 'PROBER_DISCOVERY_INTERVAL') | default('60', true) }}"
 prober_timeout_ms: "{{ lookup('env', 'PROBER_TIMEOUT_MS') | default('800', true) }}"
 
-# collect_logs.yml's k8-scheduler journal dump (manager0 only): how far back
-# to read, in journalctl's own relative-time syntax. k8-scheduler runs
-# continuously (not tied to start-logging/stop-logging) at whatever
-# log_level its own config.yaml sets - at "debug" that's ~2 lines/sec, which
-# adds up to hundreds of MB over a couple of days. Bounded here so
-# `make collect-logs` fetches a recent window, not the scheduler's entire
-# history every single time; the visualizer trims it further to the actual
-# experiment's time range on top of this.
+# How far back `make collect-logs` reads the k8-scheduler journal.
 scheduler_log_window: "{{ lookup('env', 'SCHEDULER_LOG_WINDOW') | default('2 hours ago', true) }}"
 
-# Mosquitto broker each node's prober publishes link data to
-# (probe.yml's systemd Environment= lines). 127.0.0.1 works because it's a
-# k3s NodePort, reachable from any node (including itself) at that port.
-#
-# Deliberately PROBE_MQTT_* in .env, not bare MQTT_HOST/MQTT_PORT: this is
-# the on-node value (127.0.0.1). watch_links.sh (laptop-side, off-mesh) needs
-# a different correct default (manager0.local) for its own MQTT_HOST/
-# MQTT_PORT env vars - sharing one .env key between the two would silently
-# break whichever context isn't the default's target.
+# Mosquitto broker the on-node prober publishes link data to.
 mqtt_host: "{{ lookup('env', 'PROBE_MQTT_HOST') | default('127.0.0.1', true) }}"
 mqtt_port: "{{ lookup('env', 'PROBE_MQTT_PORT') | default('31883', true) }}"
 mqtt_topic_linkdata: "{{ lookup('env', 'MQTT_TOPIC_LINKDATA') | default('network/linkdata', true) }}"

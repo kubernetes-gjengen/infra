@@ -11,13 +11,8 @@ dhcp-option=option:domain-search,{{ gotham_domain }}
 domain={{ gotham_domain }}
 local=/{{ gotham_domain }}/
 
-# Workers get <name>.{{ gotham_domain }} free from their DHCP lease hostname.
-# Manager doesn't lease from its own dnsmasq (bat0 static), so it needs this
-# explicit record - expand-hosts would instead synthesize one from
-# /etc/hosts's "127.0.1.1" self-entry, pointing manager0.{{ gotham_domain }}
-# at loopback and breaking every worker's k3s join.
+# Manager doesn't lease from its own dnsmasq, so it needs this explicit record.
 host-record={{ pi_hostname }}.{{ gotham_domain }},{{ pi_hostname }},{{ manager_mesh_ip }}
 
-# dashboard.{{ gotham_domain }} (dashboard/homepage.yml NodePort) - any
-# node's IP reaches any NodePort, same as registry_host does for Zot.
+# dashboard.{{ gotham_domain }} for dashboard/homepage.yml's NodePort.
 host-record=dashboard.{{ gotham_domain }},dashboard,{{ manager_mesh_ip }}

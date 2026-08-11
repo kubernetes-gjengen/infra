@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
 set -uo pipefail
 
-# Removes stale SSH host keys for every inventory host - needed after
-# reflashing/reimaging a Pi (new host key, same name/IP) since discovery
-# keeps names/IPs stable across reimages.
+# Removes stale SSH host keys for every inventory host, needed after reflashing a Pi.
 
 cd "$(dirname "$0")/../playbooks" || exit 1
 

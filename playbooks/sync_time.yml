@@ -1,62 +1,17 @@
 ---
-# Forces an immediate clock resync against manager0 (the mesh's own time
-# reference - see tasks/configure_ntp.yml for the one-time server/client
-# setup this assumes is already provisioned) right before a logging
-# session, and waits for it to actually land. Run before every
-# start-logging, not just once at provision time - drift reaccumulates
-# between field tests. No internet dependency: manager0 is reachable over
-# the mesh alone, which is all a field test ever has.
+# Forces an immediate clock resync against manager0 before a logging session. Run before every
+# start-logging, not just once at provision time - drift reaccumulates between field tests.
 
 - name: Sync node clocks to manager0 before a logging session
   hosts: all
   become: true
   gather_facts: false
-  # A node unreachable here must not abort the whole `make start-logging`
-  # chain (sync_time.yml -> systemctl start on every node): without this,
-  # ansible-playbook exits non-zero on any single dark host, Make aborts the
-  # recipe right there, and *no* node - not even reachable ones - gets its
-  # logger started. Same best-effort rationale as collect_logs.yml.
+  # An unreachable node must not abort start-logging for every other node.
   ignore_unreachable: true
 
   tasks:
-    # manager0's "local stratum 10" server mode (configure_ntp.yml) makes
-    # every other node agree with *it*, but never checks whether manager0
-    # itself is right - a Pi with no battery-backed RTC boots to whatever
-    # its last-known (or firmware-default) time was, and chrony happily
-    # reports "synced" once the rest of the mesh matches that, however wrong
-    # it is. Observed in practice: manager0 free-running 6 days behind
-    # actual UTC, with every worker perfectly (and uselessly) synced to
-    # that wrong time. The laptop running `make start-logging` has no such
-    # problem (real RTC, normally on the internet between field tests), so
-    # it's the one trustworthy clock in the whole chain - stamp manager0
-    # with the laptop's own current UTC time before the resync below
-    # propagates it to everyone else. Gated to manager0 rather than a
-    # separate play targeting the manager group - a LIMIT=<worker> retry
-    # that doesn't touch manager0 correctly skips this, since nothing here
-    # needs redoing.
-    # timedatectl refuses a manual set-time whenever it considers *any*
-    # known NTP provider active - and that check isn't scoped to
-    # systemd-timesyncd (`timedatectl set-ntp false` only ever toggles
-    # that unit specifically, which isn't even installed here per
-    # configure_ntp.yml). chrony.service itself is what's flagged active
-    # ("NTP service: active" in `timedatectl status`, confirmed live -
-    # "Failed to set time: Automatic time synchronization is enabled"),
-    # server-mode-only or not, so it has to come down for this to work -
-    # stop it, correct the clock, bring it back up.
-    #
-    # Deliberately NOT touching dnsmasq's DHCP leases here, even though the
-    # clock jump above makes their stored absolute expiry look stale: every
-    # worker is reached (by ansible and by hand) via ProxyCommand -W through
-    # manager0, which resolves <node>.gotham via manager0's own dnsmasq - so
-    # restarting dnsmasq mid-session, even briefly, breaks the one path used
-    # to reach every worker at all. Tried it live once: all 4 workers went
-    # UNREACHABLE the instant dnsmasq restarted, needed a manual lease
-    # restore to recover. A lease that merely *looks* expired but is still
-    # in dnsmasq's table typically keeps answering until something forces a
-    # change - much safer than a guaranteed connectivity break. If stale
-    # lease data becomes a real problem, fix it client-side (each worker
-    # renewing its own lease after its own clock resyncs) instead - never
-    # restart dnsmasq itself as part of this playbook.
+    # manager0's stratum-10 server mode never checks its own clock; a Pi with no RTC can free-run for
+    # days while every worker syncs to that wrong time. Stamp manager0 from the laptop's real clock first.
     - name: Stop chrony so timedatectl will accept a manual correction
       ansible.builtin.systemd_service:
         name: chrony
@@ -80,15 +35,7 @@
       changed_when: false
       failed_when: false
 
-    # max-tries=15, max-correction=1s, max-skew=5ppm, interval=1s - a field
-    # test logging every 5s doesn't need sub-second precision, just "close
-    # enough to the rest of the mesh," so this isn't tuned tight. max-skew
-    # was originally 0.5ppm, but `chronyc tracking` on a converged, sub-ms-
-    # offset fleet showed steady-state skew jitter up to ~0.7ppm on this Pi
-    # hardware (worker11/13 observed) - 0.5 was tighter than actual clock
-    # quality ever settles to, so it produced permanent false "did not sync"
-    # warnings on otherwise perfectly synced nodes. 5ppm is well above that
-    # observed noise floor while still catching genuinely bad clocks.
+    # Tuned loose (5ppm skew) - field logging every 5s doesn't need sub-second precision, and a tighter value produced false "did not sync" warnings on this hardware.
     - name: Wait for clock sync to converge
       ansible.builtin.command: chronyc waitsync 15 1 5 1
       register: wait_result

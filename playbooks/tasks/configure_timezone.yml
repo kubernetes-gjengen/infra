@@ -1,11 +1,5 @@
 ---
-# Pis picked up whatever locale their OS image shipped with (observed:
-# worker9 defaulted to Europe/London while the rest of the fleet is
-# Europe/Oslo) - a real one-hour skew between nodes' log timestamps, not
-# just a display quirk. Pin every node to the same zone so cross-node log
-# correlation is meaningful. No collection dependency - timedatectl ships
-# on stock Raspberry Pi OS, matching every other task in this repo using
-# only ansible.builtin.
+# Pins every node to the same zone; the stock OS image timezone can vary and skew log timestamps.
 
 - name: Check current timezone
   ansible.builtin.command: timedatectl show -p Timezone --value

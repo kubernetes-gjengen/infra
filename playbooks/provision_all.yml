@@ -1,14 +1,6 @@
 ---
 # Usage: ansible-playbook provision_all.yml
-#
-# Uses the default dynamic inventory (inventories/discover.py), which scans the
-# LAN for Pis and assigns manager/worker roles + hostnames. Runs are idempotent:
-# already-provisioned nodes are verified in place and are not rebooted unless
-# their cgroup boot config actually changes.
-#
-# No task in this repo reads an ansible_* gathered fact (grep confirms it),
-# so every play sets gather_facts: false to skip the setup module entirely.
-# pi_hostname etc. come from the discover.py inventory, not gathered facts.
+# Dynamic inventory (inventories/discover.py) finds Pis and assigns roles. Idempotent.
 
 - name: Set hostname on all nodes
   hosts: all
@@ -19,10 +11,7 @@
     - name: Disable cloud-init
       ansible.builtin.include_tasks: tasks/disable_cloud_init.yml
 
-    # Ships preinstalled on stock Pi OS - this just guards against a base
-    # image that lacks it. Checked before any network changes so that, once
-    # the mesh comes up and eth0 re-DHCPs, the nodes are still reachable at
-    # <hostname>.local via mDNS.
+    # Guards against a base image without it; stock Pi OS ships it already.
     - name: Ensure avahi-daemon is present for .local (mDNS) resolution
       ansible.builtin.apt:
         name: avahi-daemon
@@ -55,13 +44,7 @@
       ansible.builtin.include_tasks: tasks/configure_ntp.yml
       tags: ntp
 
-    # discover.py reassigns manager0/workerN names by current IP order on
-    # every scan (no persisted identity), so this play can rename many hosts
-    # in the same run. Avahi needs a moment to withdraw stale records and
-    # announce new ones across the mesh - the very next play immediately
-    # depends on .local resolution to reconnect after the network bounce, so
-    # give avahi a beat to converge first. Only pauses when a rename actually
-    # happened this run; a no-op re-provision skips it.
+    # Give avahi time to announce a renamed host before the next play reconnects over mDNS.
     - name: Let mDNS converge after hostname changes
       ansible.builtin.command: sleep 15
       delegate_to: localhost
@@ -79,17 +62,7 @@
     - name: Provision network on node
       ansible.builtin.include_tasks: tasks/00_configure_network_common.yml
 
-    # Stopping NetworkManager (in 00_configure_network_common.yml) doesn't
-    # release the DHCP lease it already holds on eth0, so once networkd
-    # requests its own lease, eth0 is left carrying two addresses. Flush it
-    # right before netplan apply so networkd's DHCP client starts clean.
-    #
-    # Both commands tear down and rebuild the interfaces, dropping our SSH
-    # session. Fire them and don't wait (poll: 0), then reconnect below via
-    # the node's stable <hostname>.local name. Only run this when the netplan
-    # profile actually changed, so re-runs don't needlessly bounce the
-    # network - that also happens to be exactly when NetworkManager was last
-    # stopped, i.e. the only time a stale lease could have been left behind.
+    # NetworkManager doesn't release its eth0 lease; flush it before netplan apply so networkd starts clean.
     - name: Flush stale eth0 address and apply netplan config (disrupts the connection)
       ansible.builtin.shell: ip addr flush dev eth0 && netplan apply
       async: 60
@@ -107,12 +80,7 @@
 
     - name: Wait for connection
       ansible.builtin.wait_for_connection:
-        # A whole-fleet netplan bounce (every host flushing eth0 and
-        # re-DHCPing at once) can take longer than a single host's reconnect
-        # to settle - DHCP server handling a burst of requests, ARP caches,
-        # mDNS reconvergence. Observed spurious "No route to host" failures
-        # around 70s elapsed with 60s timeout even though every host came
-        # back fine seconds later.
+        # A whole-fleet netplan bounce takes longer to settle than a single host's reconnect.
         delay: 10
         timeout: 120
 
@@ -163,10 +131,7 @@
     - name: Configure cgroups
       ansible.builtin.include_tasks: tasks/configure_cgroups.yml
 
-    # Applied to every worker, not just ones known to have a GPS HAT - see
-    # tasks/configure_gps_uart.yml for why this is safe/harmless on Pis with
-    # nothing wired to GPIO14/15, and how that keeps GPS detection fully
-    # automatic (no per-host "this Pi has a HAT" declaration anywhere).
+    # Applied to every worker; no per-host "has a GPS HAT" declaration exists.
     - name: Configure UART for GPS (Dragino HAT support)
       ansible.builtin.include_tasks: tasks/configure_gps_uart.yml
       tags: gps_hat
@@ -186,14 +151,11 @@
   hosts: worker
   become: true
   gather_facts: false
-  # Untagged so a full provision run always includes it (cgroups needs this
-  # regardless); also tagged gps_hat so `TAGS=gps_hat` alone - without a full
-  # provision - still reboots hosts whose UART config actually changed.
+  # Untagged so a full run always includes it; also tagged gps_hat for a UART-only run.
   tags: [always, gps_hat]
 
   tasks:
-    # Only reboot nodes whose cmdline.txt/config.txt was actually rewritten -
-    # already provisioned workers keep running untouched.
+    # Only reboots nodes whose boot config actually changed.
     - name: Reboot
       ansible.builtin.reboot:
         reboot_timeout: 120
@@ -236,12 +198,7 @@
   tags: fetch_kubeconfig
 
   tasks:
-    # k3s.yaml always hardcodes server: https://127.0.0.1:6443 - fine on the
-    # manager itself, useless fetched raw to a remote controller. Substitute
-    # in the manager's actual wired IP, queried fresh here rather than taken
-    # from ansible_host, since a prior play in this same run may have
-    # redirected ansible_host to the mDNS name after a netplan bounce - and
-    # k3s's self-signed cert's SANs cover the real IP, not that hostname.
+    # k3s.yaml hardcodes 127.0.0.1; substitute the manager's real wired IP for a remote controller.
     - name: Get manager's wired IP
       ansible.builtin.shell: ip -4 addr show eth0 | grep -oP '(?<=inet )[\d.]+'
       register: manager_wired_ip
@@ -290,9 +247,7 @@
   tags: fieldlog
 
   handlers:
-    # try-restart (unlike restart) is a no-op on a stopped unit - a config
-    # change must never be what flips fieldlog-resource from stopped to
-    # running, only `make start-logging` may do that.
+    # try-restart never starts a stopped unit; only `make start-logging` may do that.
     - name: Restart fieldlog-resource
       ansible.builtin.command: systemctl try-restart fieldlog-resource
       changed_when: false

@@ -1,27 +1,9 @@
 #!/usr/bin/env python3
 """Ansible dynamic inventory: discover Raspberry Pis on the wired setup LAN.
 
-ARP-scans the setup subnet each run, keeps Pi-OUI hosts, splits into groups:
-  * manager - one node. Prefers a Pi 5 (PI5_OUIS), else lowest IP. Sticky:
-    stays manager across runs while online, even if a Pi 5 joins later.
-  * worker  - every other Pi.
-
-Hostnames (manager0, worker0, ...) are keyed by MAC and persisted in
-STATE_PATH (discovered_hosts.json, gitignored, local machine state). A MAC
-keeps its name forever once assigned - k3s node identity/mDNS key off it, so
-renumbering would leave stale state. Offline Pis keep their slot so it can't
-be reused by another physical Pi; they just drop out of the output till seen
-again.
-
-Mesh IPs aren't set here - workers DHCP-lease bat0 from the manager, whose
-fixed bat0 IP is `manager_mesh_ip` in group_vars/all.yml. Only the wired
-setup IP (ansible_host) is handled here.
-
-A Pi that misses the wired scan but was previously assigned isn't dropped as
-long as the manager is still wired: it's reached over the mesh instead via
-`ssh -W`, proxied through the manager. ansible_host becomes `<name>.gotham` -
-the manager resolves that name itself, so this script never needs the node's
-DHCP-leased bat0 address.
+ARP-scans the subnet, assigns manager/worker roles, and persists MAC -> hostname
+in STATE_PATH so names stick across runs. A Pi off the wired LAN but previously
+assigned is still reached over the mesh, proxied through the manager.
 
 Usage (invoked by Ansible): discover.py --list / discover.py --host <name>
 Requires passwordless `sudo nmap` on the provisioner.
@@ -35,11 +17,7 @@ import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-# Repo-root .env (see .env.example) - security has not been prioritized here,
-# see that file's header. Best-effort: if python-dotenv isn't installed,
-# these constants just fall back to their literal defaults below, same as
-# ever - only `pip install python-dotenv` (or running via `make`, which
-# sources .env itself) actually picks up overrides.
+# Best-effort: falls back to the defaults below if python-dotenv isn't installed.
 try:
     from dotenv import load_dotenv
 
@@ -50,20 +28,16 @@ except ImportError:
 # Wired subnet the Pis boot onto before the mesh exists.
 SCAN_SUBNET = os.environ.get("WIRED_SCAN_SUBNET", "192.168.67.0/24")
 
-# Raspberry Pi MAC OUI prefixes (same set absorb.py filters DHCP traffic on).
 PI_OUIS = ("28:cd:c1", "b8:27:eb", "d8:3a:dd", "dc:a6:32", "e4:5f:01")
-# Pi 5 OUIs - preferred as the manager, since the Pi 5 is the beefy node.
+# Preferred as the manager - the Pi 5 is the beefy node.
 PI5_OUIS = ("d8:3a:dd", "e4:5f:01")
 
 SSH_USER = os.environ.get("PI_SSH_USER", "pi")
 SSH_PASSWORD = os.environ.get("PI_SSH_PASSWORD", "raspberry")
 
-# DNS suffix the manager's dnsmasq serves (group_vars/all.yml's gotham_domain).
 GOTHAM_DOMAIN = os.environ.get("GOTHAM_DOMAIN", "gotham")
 
-# Persisted MAC -> hostname assignments. Resolved relative to this file (not
-# cwd) so it works the same regardless of where ansible invokes the script
-# from.
+# Resolved relative to this file, not cwd, so it works regardless of where ansible invokes it.
 STATE_PATH = Path(__file__).resolve().parent / "discovered_hosts.json"
 
 
@@ -77,8 +51,7 @@ def load_assignments():
 
 
 def save_assignments(assignments):
-    """Persist MAC -> hostname assignments. Best-effort: write failure
-    shouldn't break inventory generation, just means names may re-derive."""
+    """Persist MAC -> hostname assignments. Best-effort: a write failure shouldn't break inventory generation."""
     try:
         with open(STATE_PATH, "w") as f:
             json.dump(assignments, f, indent=2, sort_keys=True)
@@ -88,11 +61,7 @@ def save_assignments(assignments):
 
 
 def assign_hostnames(pis, assignments):
-    """Extend a MAC -> hostname map with any not-yet-seen MACs from `pis`
-    (a list of (ip, mac) sorted by ascending IP), and pin the manager.
-
-    Mutates and returns `assignments`. Existing entries are never renamed.
-    """
+    """Extend a MAC -> hostname map with any not-yet-seen MACs, and pin the manager. Existing entries are never renamed."""
     live_macs = {mac for _, mac in pis}
 
     old_manager_mac = next(
@@ -101,19 +70,17 @@ def assign_hostnames(pis, assignments):
     if old_manager_mac in live_macs:
         manager_mac = old_manager_mac
     else:
-        # No manager, or old one offline - pick new one (prefer Pi 5, else lowest IP).
         manager_mac = next(
             (mac for _, mac in pis if mac.startswith(PI5_OUIS)),
             pis[0][1] if pis else None,
         )
         if old_manager_mac is not None:
-            # Free the slot; old manager gets a fresh workerN if it returns.
             del assignments[old_manager_mac]
 
     if manager_mac is not None:
         assignments[manager_mac] = "manager0"
 
-    # Never reuse a claimed workerN, even from an offline Pi - numbers stick for good.
+    # workerN numbers stick for good, even from an offline Pi.
     used_worker_ns = {
         int(name[len("worker") :])
         for name in assignments.values()
@@ -129,15 +96,10 @@ def assign_hostnames(pis, assignments):
 
 
 def local_pi_entry():
-    """(ip, mac) for eth0 if this script is itself running on a Pi wired
-    into SCAN_SUBNET - None otherwise (e.g. running from a laptop).
+    """(ip, mac) for eth0 if this script itself runs on a wired Pi, else None.
 
-    A host never receives its own ARP reply, so scan_pis() alone can never
-    see the Pi it's actually running on. Harmless when run from the
-    manager's own venividivici pod for every *other* node, but without this
-    the manager's own MAC always looks "offline" to itself: sticky-manager
-    logic in assign_hostnames() then deletes its assignment and promotes a
-    different Pi to manager0 on every single run.
+    A host never receives its own ARP reply, so scan_pis() alone would make the manager
+    look permanently offline to itself and lose its sticky assignment every run.
     """
     try:
         mac = Path("/sys/class/net/eth0/address").read_text().strip().lower()
@@ -164,11 +126,9 @@ def local_pi_entry():
 
 
 def scan_pis():
-    """ARP-scan the setup subnet; return [(ip, mac), ...] for Raspberry Pis.
+    """ARP-scan the setup subnet; return [(ip, mac), ...] sorted by ascending IP.
 
-    Sorted by ascending numeric IP so hostname assignment is deterministic.
-    Returns an empty list (rather than raising) if nmap is missing or fails,
-    so `ansible-inventory --list` degrades gracefully.
+    Returns an empty list, not an exception, if nmap is missing or fails.
     """
     try:
         out = subprocess.run(
@@ -195,8 +155,7 @@ def scan_pis():
         if not (ip and mac and mac.startswith(PI_OUIS)):
             continue
         ip_key = tuple(int(octet) for octet in ip.split("."))
-        # A Pi can answer ARP on >1 IP (stale + fresh DHCP lease). Collapse
-        # to one entry per MAC, keeping the lowest IP for determinism.
+        # A Pi can answer ARP on >1 IP; collapse to one entry per MAC, keeping the lowest.
         existing = by_mac.get(mac)
         if existing is not None:
             kept = ip if ip_key < existing[0] else existing[1]
@@ -219,8 +178,7 @@ def scan_pis():
 
 
 def mesh_proxy_extra_ssh_args(manager_wired_ip):
-    """-o ProxyCommand=... args (list form, no outer shell quoting) to reach
-    a mesh-only Pi through the manager, mirroring mesh_proxy_ssh_args."""
+    """-o ProxyCommand=... args (list form) to reach a mesh-only Pi through the manager."""
     return [
         "-o",
         "ProxyCommand=sshpass -p {password} ssh -o StrictHostKeyChecking=no "
@@ -231,10 +189,7 @@ def mesh_proxy_extra_ssh_args(manager_wired_ip):
 
 
 def fetch_model(target, extra_ssh_args=None, timeout=5):
-    """SSH into `target` and read the Pi model string. None on any failure.
-
-    Manual-only (--model): never called from --list / the ansible flow.
-    """
+    """SSH into `target` and read the Pi model string. None on any failure. Manual-only (--model)."""
     cmd = [
         "sshpass",
         "-p",
@@ -265,8 +220,7 @@ def fetch_model(target, extra_ssh_args=None, timeout=5):
 
 
 def print_models():
-    """Manual-only: SSH each Pi (wired direct, mesh-only proxied through the
-    manager) and print name/ip/mac/model as a table."""
+    """Manual-only: SSH each Pi and print name/ip/mac/model as a table."""
     pis = scan_pis()
     assignments = assign_hostnames(pis, load_assignments())
     save_assignments(assignments)
@@ -300,9 +254,7 @@ def print_models():
 def mesh_proxy_ssh_args(manager_wired_ip):
     """ansible_ssh_common_args that tunnel through the manager's wired IP.
 
-    Password auth (SSH_PASSWORD) has to be supplied a second time here for
-    the jump hop itself - ansible_password only covers the final leg, and
-    there's no key-based auth set up on these Pis to fall back on.
+    Password auth is supplied again here for the jump hop; ansible_password only covers the final leg.
     """
     return (
         "-o StrictHostKeyChecking=no "

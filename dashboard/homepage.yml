@@ -1,13 +1,5 @@
-# gethomepage/homepage - link aggregator for the cluster's frontends
-# (maviz, bapi, object-detection, sensehat-frontend) plus cluster health
-# (per-node CPU/mem, per-service up/down dot via the k8s API - mode: cluster
-# in kubernetes.yaml, needs the ClusterRole below). Public ghcr.io image
-# (arm64), so - like mosquitto.yml - it's pulled directly rather than pushed
-# through the local Zot registry.
-#
-# Scheduled on capability/gui the same way maviz/bapi are, since it's just
-# another browser-facing frontend. Reachable at http://dashboard.gotham -
-# DNS record added in playbooks/templates/dnsmasq.conf.j2.
+# gethomepage/homepage - link aggregator for the cluster's frontends plus cluster health.
+# Reachable at http://dashboard.gotham.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -69,9 +61,7 @@ data:
   kubernetes.yaml: |
     mode: cluster
   docker.yaml: |
-    # no docker host integration
   proxmox.yaml: |
-    # no proxmox integration
   custom.css: ""
   custom.js: ""
   services.yaml: |
@@ -142,9 +132,7 @@ spec:
             - name: http
               containerPort: 3000
           env:
-            # Next.js host-header check. Wildcard - reached via multiple
-            # hosts (dashboard.gotham, NodePort on any node IP, localhost)
-            # and per-host allowlist kept breaking access.
+            # Wildcard - reached via multiple hosts, and a per-host allowlist kept breaking access.
             - name: HOMEPAGE_ALLOWED_HOSTS
               value: "*"
           resources:
@@ -182,10 +170,7 @@ spec:
             - name: config
               mountPath: /app/config/custom.js
               subPath: custom.js
-            # Newer homepage versions write logs under /app/config/logs at
-            # runtime - EACCES otherwise, since the container runs as
-            # non-root (runAsUser: 1000) and that directory doesn't exist
-            # in the image with writable permissions for that UID.
+            # homepage writes logs here at runtime; EACCES otherwise since the container runs as non-root.
             - name: logs
               mountPath: /app/config/logs
       volumes:

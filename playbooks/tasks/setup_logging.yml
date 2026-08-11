@@ -1,8 +1,5 @@
 ---
-# Field-test resource logging. Installed disabled+stopped - `make
-# start-logging` / `make stop-logging` toggle it, this play only makes sure
-# it's present and configured. fieldlog_interval / fieldlog_max_size_kb come
-# from group_vars/all.yml.
+# Installed disabled+stopped; `make start-logging`/`stop-logging` toggle it.
 
 - name: Copy fieldlog resource script
   ansible.builtin.copy:
@@ -25,9 +22,7 @@
       ExecStart=/home/pi/fieldlog_resource.sh
       Restart=always
       RestartSec=10
-      # Auto-creates /run/fieldlog before start and - importantly - removes
-      # it on stop/crash/SIGKILL alike, so the session marker the prober
-      # reads never outlives this service without needing a script-side trap.
+      # Auto-creates and removes /run/fieldlog on stop/crash, so the marker never outlives this service.
       RuntimeDirectory=fieldlog
       Environment="NODE_ID={{ inventory_hostname }}"
       Environment="LOG_DIR=/logs"
@@ -39,10 +34,7 @@
       WantedBy=multi-user.target
   notify: Restart fieldlog-resource
 
-# Present but not running - `make start-logging` starts it on demand. A
-# config-only change (e.g. fieldlog_interval) still needs to reach an
-# already-running instance, hence the handler notify above; but this task
-# itself must never flip a stopped logger to started.
+# Must never flip a stopped logger to started - `make start-logging` does that on demand.
 - name: Ensure fieldlog-resource is enabled but not started
   ansible.builtin.systemd:
     name: fieldlog-resource

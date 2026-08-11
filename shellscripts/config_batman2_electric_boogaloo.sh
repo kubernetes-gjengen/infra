@@ -1,9 +1,7 @@
 #!/bin/bash
 #Why use many commands when few tokens do trick?
 
-# Overridable via systemd Environment= (see batman.service, templated from
-# mesh_ssid/mesh_channel in group_vars/all.yml) - defaults match this
-# project's mesh config when run standalone.
+# Overridable via systemd Environment= (see batman.service).
 MESH_SSID="${MESH_SSID:-meshnet}"
 MESH_CHANNEL="${MESH_CHANNEL:-1}"
 

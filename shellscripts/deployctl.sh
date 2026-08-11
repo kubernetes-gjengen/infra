@@ -1,22 +1,8 @@
 #!/usr/bin/env bash
 set -uo pipefail
 
-# Interactive picker for Kubernetes deployments across this repo and its
-# sibling repos (../*  relative to this script's location, i.e. ~/repos/ffi).
-#
-# A "deployment" is any file containing `kind: Deployment` or
-# `kind: DaemonSet` that grep can find. If the owning repo has a Makefile
-# with a target matching the chosen
-# action (apply/logs/delete/build/rollout), that's used - most deployments
-# already have one (see object-detection/Makefile, gps-client/Makefile for
-# the convention). Otherwise falls back to a direct kubectl equivalent for
-# that one specific action (build has no generic fallback - there's no way
-# to infer an image name/registry from nothing).
-#
-# Usage:
-#   deployctl.sh                 fzf-pick deployment, then fzf-pick action
-#   deployctl.sh apply|logs|delete|build|rollout
-#                                 fzf-pick deployment only, run that action
+# Interactive picker for Kubernetes deployments across this repo and its sibling repos.
+# Usage: deployctl.sh [apply|logs|delete|build|rollout]
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INFRA_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -49,8 +35,6 @@ if [ $# -gt 0 ]; then
 fi
 
 # --- Discover deployments -------------------------------------------------
-# One row per (repo, manifest file) pair:
-#   DISPLAY \t REPO_DIR \t MAKEFILE(or empty) \t MANIFEST_FILE \t DEPLOYMENT_NAME \t KIND
 
 candidates=("$INFRA_ROOT")
 for d in "$SIBLINGS_ROOT"/*/; do
@@ -65,9 +49,7 @@ for repo in "${candidates[@]}"; do
   makefile=""
   [ -f "$repo/Makefile" ] && makefile="$repo/Makefile"
 
-  # /templates/ excludes Helm chart templates - they use Go template syntax
-  # (e.g. {{ .Release.Name }}) instead of literal values, so they're not
-  # directly kubectl-applyable and need `helm template`/`helm install`.
+  # /templates/ excludes Helm charts - not directly kubectl-applyable.
   mapfile -t manifests < <(grep -rlE "^kind: (Deployment|DaemonSet)" \
     --include="*.yml" --include="*.yaml" "$repo" 2>/dev/null |
     grep -v -e '/\.git/' -e '/node_modules/' -e '/templates/')
@@ -77,10 +59,7 @@ for repo in "${candidates[@]}"; do
   [ "${#manifests[@]}" -gt 1 ] && multi=1
 
   for m in "${manifests[@]}"; do
-    # A file can hold more than one `kind: Deployment`/`kind: DaemonSet`
-    # block (e.g. an app plus a supporting service like a message broker).
-    # Prefer the one whose name matches the repo, else take the first one
-    # found.
+    # A file can hold more than one Deployment/DaemonSet block; prefer the one named after the repo.
     mapfile -t dep_entries < <(awk '
       /^kind: (Deployment|DaemonSet)/ { k=$2; f=1; next }
       f && /^[[:space:]]+name:[[:space:]]*/ {

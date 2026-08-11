@@ -2,17 +2,8 @@
 set -uo pipefail
 
 # Checks a list of Pis for gpsd being installed and a GPS receiver attached.
-#
-# Usage:
-#   find_gps_pi.sh host1 host2 ...
-#   find_gps_pi.sh -f hosts.txt
-#
-# Hosts can be given as short names (manager0, worker3, ...) - they're
-# resolved via mDNS as <host>.local, same convention as watch_links.sh.
-#
-# Env: PI_SSH_USER (default: pi), PI_SSH_PASSWORD (default: raspberry, this
-# project's default Pi credential - see .env.example/discover.py), TIMEOUT
-# seconds per host (default: 5)
+# Usage: find_gps_pi.sh host1 host2 ... | find_gps_pi.sh -f hosts.txt
+# Env: PI_SSH_USER, PI_SSH_PASSWORD, TIMEOUT (seconds per host).
 
 SSH_USER="${PI_SSH_USER:-pi}"
 SSH_PASS="${PI_SSH_PASSWORD:-raspberry}"
@@ -39,7 +30,6 @@ hosts+=("$@")
 
 [ "${#hosts[@]}" -eq 0 ] && usage
 
-# manager0 -> manager0.local, but leave already-qualified names alone.
 qualify() {
   case "$1" in
   *.* | *:*) echo "$1" ;;
@@ -47,10 +37,7 @@ qualify() {
   esac
 }
 
-# These Pis authenticate by password, not key (same default as the rest of
-# this repo - see discover.py's SSH_PASSWORD). -o BatchMode=yes would refuse
-# to even prompt for one, so every ssh call failed auth before the remote
-# command ever ran - wrap with sshpass instead when it's available.
+# These Pis authenticate by password, not key.
 if command -v sshpass >/dev/null 2>&1; then
   ssh_run() { sshpass -p "$SSH_PASS" ssh -o StrictHostKeyChecking=accept-new "$@"; }
 else
@@ -58,16 +45,7 @@ else
   ssh_run() { ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes "$@"; }
 fi
 
-# Installed and "the service is up" are separate, independently-failing
-# conditions (gpsd can be apt-installed but never started/enabled) - check
-# each explicitly rather than guessing from gpspipe's error text, which is
-# fragile (wording-dependent) and conflated both cases into one message.
-# dpkg, not `command -v gpsd`: non-interactive ssh sessions get a reduced
-# PATH that excludes /usr/sbin, where the gpsd binary actually lives -
-# command -v would report "not installed" even when it genuinely is.
-# -w turns on gpsd's watch mode (JSON), which reports a DEVICES list right
-# away instead of waiting for a fix. -x makes gpspipe exit itself after N
-# seconds so we don't hang on a Pi with no GPS attached.
+# dpkg, not `command -v gpsd`: non-interactive ssh sessions get a reduced PATH that excludes /usr/sbin.
 remote_cmd="
 if ! dpkg -s gpsd >/dev/null 2>&1; then
   echo STATUS:NOT_INSTALLED
@@ -86,9 +64,7 @@ for host in "${hosts[@]}"; do
 
   output=$(ssh_run -o ConnectTimeout="$TIMEOUT" "$SSH_USER@$target" "$remote_cmd" 2>&1)
 
-  # The remote script always echoes exactly one STATUS: marker on success,
-  # so its absence means ssh itself never got there (auth/DNS/connection
-  # failure) - far more reliable than guessing from exit status/emptiness.
+  # No STATUS: marker means ssh itself never got there.
   case "$output" in
   *STATUS:NOT_INSTALLED*)
     echo "ERROR: gpsd not installed"

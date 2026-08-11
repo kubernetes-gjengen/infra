@@ -67,10 +67,7 @@ spec:
       labels:
         app: zot
     spec:
-      # Keeps the zot pod (and its node-local local-path PVC) on the manager,
-      # since that's the one node every mesh member can already reach. k3s
-      # labels its server node(s) with this automatically - verify with
-      # `kubectl get nodes --show-labels` if scheduling ever gets stuck.
+      # Keeps zot (and its node-local PVC) on the manager, the one node every mesh member can reach.
       nodeSelector:
         node-role.kubernetes.io/control-plane: "true"
       tolerations:
@@ -109,8 +106,7 @@ spec:
             claimName: zot-storage
         - name: tls
           secret:
-            # Not created by this manifest - generate the cert and create
-            # this secret first. See registry/README.md.
+            # Not created by this manifest - see registry/README.md.
             secretName: zot-tls
 ---
 apiVersion: v1

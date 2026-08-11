@@ -45,11 +45,7 @@
   args:
     executable: /bin/bash
   when: not k3s_bin.stat.exists
-  # The install script's own `systemctl start k3s-agent` can report failure
-  # even though the agent goes on to start fine seconds later -
-  # k3s-agent.service is Type=notify, and first-boot startup (image pulls,
-  # flannel/vxlan setup) can outrun that internal wait. Don't trust this
-  # exit code as final; the poll below is the real signal.
+  # The install script's own start-wait can report failure even though the agent starts fine seconds later.
   failed_when: false
 
 - name: Confirm k3s-agent actually came up (install script's own start-wait can time out even on eventual success)

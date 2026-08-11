@@ -1,18 +1,7 @@
 ---
-# Expects: `capabilities` (loaded via vars_files: capabilities.yml by the
-# calling play), `pi_hostname` (from the discover.py inventory).
+# Expects: `capabilities` (vars_files: capabilities.yml), `pi_hostname` (discover.py inventory).
 
-# Detection *tooling* prerequisites. Best-effort: a package that doesn't
-# exist for a given Pi's OS release just means that capability's checks
-# report ERROR rather than silently being skipped.
-#
-# gpsd here is a detection *tool*, not the signal: the gps check runs it
-# transiently (started and killed within the single check command) only
-# to probe /dev/ttyUSB0 when nothing else already holds it open - it's
-# never enabled/started as a systemd service, and its installed/running
-# state on the host is never itself checked for anything. See the
-# REVISION HISTORY comment on the gps entry in capabilities.yml for why
-# this is different from that first-draft mistake.
+# gpsd here is a detection tool only, run transiently - never enabled as a service.
 - name: Ensure gps detection tooling is installed (fuser to check for an existing holder, gpsd as a throwaway probe when the device is free)
   ansible.builtin.apt:
     name:
@@ -31,12 +20,6 @@
   failed_when: false
   when: inventory_hostname in groups[capabilities.sensehat.hosts | default('all')]
 
-# rpicam-hello (the only binary the check below actually runs) lives in
-# rpicam-apps-core. The full rpicam-apps metapackage additionally pulls in
-# rpicam-apps-encoder, rpicam-apps-opencv-postprocess (OpenCV) and
-# rpicam-apps-preview (Qt5/GStreamer/X11) - none of which this detection
-# needs, but which turn a "is a camera plugged in" check into a many-
-# hundred-package install on every Pi in the fleet, camera or not.
 - name: Ensure ai-camera detection tooling is installed (rpicam-apps-core has rpicam-hello without the heavy encoder/preview/opencv deps)
   ansible.builtin.apt:
     name: rpicam-apps-core
@@ -56,9 +39,7 @@
     - inventory_hostname in groups[capabilities['ai-camera'].hosts | default('all')]
     - rpicam_core_install is failed
 
-# Each command runs as `timeout N bash -s`, with the script text fed via
-# stdin rather than interpolated into the command line - avoids any
-# quoting/escaping hazard from the $()/if/pipe syntax the scripts use.
+# Script text is fed via stdin, not interpolated, to avoid quoting hazards.
 - name: Run capability detection commands
   ansible.builtin.shell:
     cmd: "timeout {{ item.value.timeout | default(10) }} bash -s"
@@ -86,16 +67,8 @@
     not (item.skipped | default(false))
     and (item.rc | default(-1)) not in [0, 1]
 
-# Runs from the controller against the freshly-fetched cluster kubeconfig
-# (playbook_dir/kubeconfig.yml, written by the "Fetch k3s config to
-# controller" play) rather than ~/.kube/config, which is populated by a
-# separate `make kubeconfig` step and may be stale/absent during this run.
-# Node name = pi_hostname: k3s registers with the OS hostname (no
-# --node-name override anywhere), and hostname is set to pi_hostname
-# earlier in this same playbook run.
-#
-# retries: right after "Install k3s agent on workers", a just-joined
-# node's kubelet may not have registered with the API server yet.
+# Uses the freshly-fetched kubeconfig, not ~/.kube/config, which may be stale.
+# retries: a just-joined node's kubelet may not have registered with the API server yet.
 - name: Label node for each detected (present) capability
   ansible.builtin.command:
     cmd: >-
@@ -114,8 +87,5 @@
   retries: 6
   delay: 5
   changed_when: "'not labeled' not in capability_label_result.stdout"
-  # A labeling failure (node not Ready yet, API server hiccup) must not drop
-  # this host out of every later play in the run - logs/fieldlog/prober
-  # setup still need to happen even if this node's capability label doesn't
-  # get applied this pass. Re-running `make label` later retries just this.
+  # A labeling failure must not drop this host out of later plays; `make label` retries it separately.
   ignore_errors: true

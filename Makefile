@@ -3,14 +3,7 @@
 
 PLAYBOOK_DIR := playbooks
 
-# Sources .env (repo root, gitignored - see .env.example) into the recipe's
-# shell before anything that reads config from it (ansible-playbook,
-# discover.py, docker). `-f` guard means a missing .env is a no-op, not an
-# error - group_vars/all.yml's lookup('env', ...) calls fall back to their
-# own defaults in that case. Prefixed onto recipes rather than loaded via
-# `include` because several values (e.g. SCHEDULER_LOG_WINDOW="2 hours ago")
-# contain spaces that Make's own include syntax doesn't quote the way a
-# shell `source` does.
+# Sources .env into the recipe's shell before anything that reads config from it.
 WITH_ENV := set -a; [ -f $(CURDIR)/.env ] && . $(CURDIR)/.env; set +a;
 
 ANSIBLE      := $(WITH_ENV) cd $(PLAYBOOK_DIR) && ansible-playbook
@@ -24,12 +17,8 @@ ifdef LIMIT
   LIMIT_FLAG := --limit $(LIMIT)
 endif
 
-# start-logging's session id: the laptop's own clock, computed once here
-# rather than left to each node to mint its own on service start (that's
-# what used to scatter one experiment across N slightly-different ids - see
-# fieldlog_resource.sh). Override to rejoin an existing experiment when
-# retrying a node that failed to start, e.g.
-#   make start-logging LIMIT=worker7 SESSION=20260807T101616Z
+# start-logging's session id, computed once here so every node shares it. Override to rejoin
+# an existing experiment, e.g. make start-logging LIMIT=worker7 SESSION=20260807T101616Z
 SESSION ?= $(shell date -u +%Y%m%dT%H%M%SZ)
 
 # Pass TAGS=prober or SKIP=prober as needed. Other tags: configure_prompt,
@@ -143,17 +132,7 @@ registry-trust: ## Configure THIS machine to push to the Zot registry (fetches t
 watch: ## Pick a live cluster view (scheduler logs, ...) and stream it. Ctrl-C to stop.
 	@shellscripts/watchctl.sh
 
-# fieldlog-resource.service's RuntimeDirectory=fieldlog (see
-# fieldlog_resource.sh) is recreated - wiping any pre-existing contents -
-# every time systemd (re)starts the unit, not just when it stops. Seeding
-# the session id into /run/fieldlog/session_id *before* `systemctl start`
-# used to race that wipe: the marker got clobbered the instant the service
-# started, so the script fell back to self-minting its own id from its own
-# (possibly clock-drifted) system time instead of the laptop's. Seeding it
-# via `systemctl set-environment` instead survives the wipe - it lives in
-# the systemd manager's own process, not the filesystem - and the script
-# writes whatever id it resolves back into the marker on startup anyway, so
-# the prober's marker-polling keeps working unchanged.
+# systemctl set-environment survives fieldlog-resource's RuntimeDirectory wipe on (re)start; a marker file doesn't.
 start-logging: ## Sync node clocks, then start field-test resource logging on all nodes (LIMIT=<host> for one; SESSION=<id> to rejoin an existing experiment)
 	$(ANSIBLE) sync_time.yml $(LIMIT_FLAG)
 	$(WITH_ENV) cd $(PLAYBOOK_DIR) && ansible all -b -m ansible.builtin.command \
@@ -170,12 +149,7 @@ collect-logs: ## Fetch fieldlog CSVs, scheduler journal, and radio-wrapper app p
 	@echo "Logs synced to collected-logs/synced/"
 
 ## Experiment (no-router field setup: laptop plugged directly into manager)
-#
-# Two-phase switchover, see MANAGER_WIRED_IP/WIRED_SCAN_SUBNET in .env.example.
-# Phase 1 runs while manager is still reachable on the router/switch LAN, to
-# push its static eth0 IP. Phase 2 runs after physically moving the cable and
-# giving your own laptop's NIC a static IP in the same subnet - that part
-# isn't automatable, it's your machine, not a Pi.
+# Two-phase switchover; see MANAGER_WIRED_IP/WIRED_SCAN_SUBNET in .env.example.
 
 field-phase-one: ## Push manager's static eth0 IP (MANAGER_WIRED_IP) - run BEFORE moving the cable, while still on the router/switch LAN
 	@$(WITH_ENV) [ -n "$$MANAGER_WIRED_IP" ] || { echo "MANAGER_WIRED_IP not set in .env - see .env.example"; exit 1; }

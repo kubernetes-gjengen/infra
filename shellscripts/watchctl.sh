@@ -1,13 +1,8 @@
 #!/usr/bin/env bash
 set -uo pipefail
 
-# Interactive picker for live "watch" views into the cluster - each one
-# streams continuously until Ctrl-C. Add more entries to TARGETS and the
-# dispatch case below as new ones come up.
-#
-# Usage:
-#   watchctl.sh             fzf-pick a target
-#   watchctl.sh pods        pick this specific target directly
+# Interactive picker for live "watch" views into the cluster; streams until Ctrl-C.
+# Usage: watchctl.sh [target]
 
 SSH_USER="${PI_SSH_USER:-pi}"
 SSH_PASS="${PI_SSH_PASSWORD:-raspberry}"
@@ -49,9 +44,7 @@ if [ -z "$target" ]; then
   [ -z "$target" ] && exit 0
 fi
 
-# These Pis authenticate by password, not key (same convention as
-# find_gps_pi.sh) - -t forces a pty so a live tail like `journalctl -f`
-# streams normally over ssh instead of buffering.
+# -t forces a pty so a live tail streams over ssh instead of buffering.
 if command -v sshpass >/dev/null 2>&1; then
   ssh_run() { sshpass -p "$SSH_PASS" ssh -t -o StrictHostKeyChecking=accept-new "$@"; }
 else
@@ -65,17 +58,11 @@ scheduler)
   ssh_run "$SSH_USER@$MANAGER_HOST" journalctl -u k8-scheduler.service -f
   ;;
 pods)
-  # default holds the app deployments; registry holds the Zot registry
-  # (its own namespace - see registry/zot.yml) - plain `kubectl get pods`
-  # only shows default, so list both explicitly.
+  # registry is Zot's own namespace; plain `kubectl get pods` only shows default.
   exec watch -n 2 'kubectl get pods -n default -o wide; echo; kubectl get pods -n registry -o wide'
   ;;
 nodes)
-  # Drops OS-IMAGE/KERNEL-VERSION/CONTAINER-RUNTIME (rarely useful, wide)
-  # in favor of a LABELS column - but only non-default labels (the
-  # capability/* ones from capabilities.yml), not the usual
-  # kubernetes.io/beta.kubernetes.io/node.kubernetes.io/node-role.io
-  # noise every node already carries.
+  # Shows only non-default labels (capability/* from capabilities.yml), not the usual k8s noise.
   exec watch -n 2 "kubectl get nodes -o wide --show-labels --no-headers | awk '
     BEGIN { print \"NAME STATUS ROLES AGE VERSION INTERNAL-IP EXTERNAL-IP LABELS\" }
     {
