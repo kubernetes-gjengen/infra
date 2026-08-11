@@ -43,9 +43,9 @@
     # historical data to this one.
     #
     # ignore_errors for the same reason as the unreachable-node case above:
-    # network_prober.sh writes to these files continuously (see
-    # shellscripts/network_prober.sh), so a file caught mid-write is
-    # expected raciness on a live log, not a failure worth aborting over.
+    # the network prober (see probe.yml) writes to these files continuously,
+    # so a file caught mid-write is expected raciness on a live log, not a
+    # failure worth aborting over.
     - name: Fetch fieldlog CSVs
       ansible.posix.synchronize:
         mode: pull

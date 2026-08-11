@@ -6,7 +6,7 @@ set -uo pipefail
 export LC_NUMERIC=C
 
 # Live table of mesh link latency/throughput, sourced from the same
-# network/linkdata MQTT topic network_prober.sh (on each Pi) publishes to.
+# network/linkdata MQTT topic the network prober (on each Pi) publishes to.
 # The broker is a k3s NodePort service, reachable from any node - including
 # a laptop on the wired setup subnet - at <any-node>:MQTT_PORT.
 #

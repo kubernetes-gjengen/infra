@@ -23,7 +23,7 @@ SESSION_MARKER="${SESSION_MARKER:-/run/fieldlog/session_id}"
 # raced that wipe and always lost, silently falling back to self-minting.
 # The environment var lives in the systemd manager's own process, so it
 # survives the directory wipe. SESSION_MARKER is still where *this script*
-# publishes whatever id it resolved, every start - network_prober.sh reads
+# publishes whatever id it resolved, every start - the network prober reads
 # it to scope its own CSVs to the same session and to know whether a
 # session is active at all - and it's still what a bare manual `systemctl
 # start` (no env var set) falls back to reusing, then finally self-mints if

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this project does
 
-This repo automates the setup of a **MANET (Mobile Ad-hoc NETwork)** using the [B.A.T.M.A.N. (batman-adv)](https://www.open-mesh.org/projects/batman-adv/wiki/Using-batctl) mesh routing protocol on a Raspberry Pi cluster. Ansible provisions the nodes; shell scripts configure the mesh and bridge interfaces at runtime.
+This repo automates the setup of a **MANET (Mobile Ad-hoc NETwork)** using the [B.A.T.M.A.N. (batman-adv)](https://www.open-mesh.org/projects/batman-adv/wiki/Using-batctl) mesh routing protocol on a Raspberry Pi cluster. Ansible provisions the nodes and configures the mesh/netplan networking; shell scripts handle field-test logging and operator-facing tooling (live cluster views, GPS discovery) on top.
 
 ## Running the playbook
 
@@ -21,10 +21,17 @@ so no `-i` flag is needed when running from `playbooks/`.
 
 ## Architecture
 
-### Provisioning flow (`config-batman.yml`)
+### Provisioning flow (`provision_all.yml`)
 
-1. **All nodes** — installs `batctl`, copies and runs `config_batman.sh <mesh_ip>` where the IP is derived as `192.168.3.<base_ip_start + node_index>` (base `241`).
-2. **Manager node only** — copies and runs `bridge.sh`, bridging `bat0` (mesh) and `eth0` (ethernet) into `br0` so the operator's laptop can reach all mesh nodes via a single ethernet connection.
+Idempotent, tag-scoped sequence of plays run against the dynamic inventory:
+
+1. Hostname, avahi (mDNS), bashrc prompt, timezone, mesh-local NTP (chrony against manager0).
+2. Mesh networking on every node (`tasks/00_configure_network_common.yml`): deploys `config_batman2_electric_boogaloo.sh` and a templated `batman.service` that bring up `wlan0` in ad-hoc mode and the `bat0` interface, plus a netplan profile (`templates/90-netplan-workers.yml.j2`) for `bat0`/`eth0`.
+3. Manager only: NAT (iptables MASQUERADE from `bat0` out `eth0`) and `dnsmasq` DHCP/DNS on `bat0` handing out mesh IPs and `*.gotham` names.
+4. k3s server on the manager, k3s agent on workers (joins over `manager0.gotham`).
+5. Capability detection (GPS/AI camera/Sense HAT/Pi model, `capabilities.yml`) — labels k8s nodes `capability/<key>=true`.
+6. Field-test logging (`fieldlog-resource.service`, installed disabled) and the network prober (`probe.yml` — a C binary cross-compiled from the sibling `prober/` repo, publishes latency/throughput to MQTT).
+7. Registry CA trust for containerd (Zot).
 
 ### Inventory
 
@@ -36,24 +43,32 @@ so no `-i` flag is needed when running from `playbooks/`.
 
 | Script | Runs on | Purpose |
 |---|---|---|
-| `config_batman.sh <mesh_ip>` | Each Pi | Stops NetworkManager/wpa_supplicant, puts `wlan0` in ad-hoc mode on SSID `meshnet` channel 1, loads `batman-adv`, assigns mesh IP to `bat0`, adds default route via `192.168.3.241` |
-| `bridge.sh` | Manager Pi | Bridges `eth0` + `bat0` into `br0`, preserving both IP addresses |
-| `network_prober.sh` | Each Pi | Measures per-neighbour latency and throughput via `batctl`, then pushes results to a gRPC `LinkService` (port-forwarded from a K8s pod) |
-| `network_probe_runner.sh` | Each Pi | Wrapper that runs `network_prober.sh` in a loop with random 10–120 s backoff |
+| `config_batman2_electric_boogaloo.sh` | Each Pi | Stops NetworkManager/wpa_supplicant, puts `wlan0` in ad-hoc mode on SSID/channel from `MESH_SSID`/`MESH_CHANNEL`, loads `batman-adv`, brings up `bat0` — driven by `batman.service`, templated in by `tasks/00_configure_network_common.yml` |
+| `fieldlog_resource.sh` | Each Pi | Field-test CPU/mem/disk sampler; installed disabled, toggled by `make start-logging`/`stop-logging` |
+| `watchctl.sh` / `watch_links.sh` | Laptop (manual) | Live `watch`-style views into the cluster / live mesh link latency-throughput table sourced from MQTT |
+| `find_gps_pi.sh` | Laptop (manual) | SSHes the fleet to report which Pi has a GPS device attached |
+| `deployctl.sh` | Laptop (manual) | `make deploy` — picks and runs a sibling repo's k8s Deployment target |
+| `reset_known_hosts.sh` | Laptop (manual) | Clears stale SSH host keys after reflashing/reimaging a Pi |
+
+Bridging (formerly `bridge.sh`, `eth0`+`bat0` into a `br0` on the manager) and the network prober (formerly `network_prober.sh`/`network_probe_runner.sh`, bash + gRPC) have since been replaced — bridging by netplan, the prober by a cross-compiled C binary (see `probe.yml`, sibling `prober/` repo).
 
 ### Systemd services
 
-- `batman.service` — reads IP from `/home/pi/ip_addr` and runs `config_batman.sh` on boot. **Must be installed and the `ip_addr` file created manually** (not done by the playbook).
-- `network_prober.service` — runs `network_probe_runner.sh` continuously via `Restart=always`.
+- `batman.service` — oneshot, `ExecStart=/usr/local/bin/config_batman.sh` (deployed from `config_batman2_electric_boogaloo.sh`), `MESH_SSID`/`MESH_CHANNEL` templated into its `Environment=` lines. Installed, enabled and started automatically by `tasks/00_configure_network_common.yml` — no manual step.
+- `network_prober.service` — runs the C prober binary continuously (`Restart=always`), deployed by `probe.yml`.
+- `fieldlog-resource.service` — installed enabled but stopped; `make start-logging`/`stop-logging` start/stop it on demand.
+- `nat-routing.service` / `dnsmasq` — manager only, NAT and DHCP/DNS for the mesh.
 
 ### Network topology
 
 ```
-Laptop ── eth0 ── [Manager Pi (br0: eth0 + bat0)] ── batman-adv mesh ── Worker Pis
-                   192.168.3.241/28                    192.168.3.241–245/28
+Laptop ── eth0 ── [Manager Pi] ── batman-adv mesh (bat0) ── Worker Pis
+        (wired setup LAN,          192.168.42.0/24 — manager fixed at
+         discovery/SSH only)       .1, workers DHCP-leased from the
+                                    manager's dnsmasq
 ```
 
-The `/28` subnet covers `.241–.254` (14 addresses); default route for all mesh nodes points to the manager (`192.168.3.241`).
+Once provisioned, the manager and workers reach each other entirely over the mesh; the wired LAN (`WIRED_SCAN_SUBNET`, default `192.168.67.0/24`) is only needed for `discover.py`'s initial ARP scan, or as a fallback per-host (see Inventory above).
 
 ### Kubernetes / registry
 
@@ -61,7 +76,4 @@ The `/28` subnet covers `.241–.254` (14 addresses); default route for all mesh
 
 ## Known manual steps (not automated)
 
-- Copy `batman.service` to `/etc/systemd/system/` on each Pi and run `sudo systemctl enable batman`.
-- Create `/home/pi/ip_addr` on each Pi containing its desired mesh IP.
-- The `network_prober.sh` expects a `message.proto` at `/home/pi/` and a running `apiserver` pod in K8s with port `50051`.
-- Zot registry TLS: generate the cert and create the `zot-tls` k8s secret — see `registry/README.md`. (Trusting the CA on every node's containerd *is* automated, unlike the other items in this list.)
+- Zot registry TLS: generate the cert and create the `zot-tls` k8s secret — see `registry/README.md`. (Trusting the CA on every node's containerd *is* automated.)

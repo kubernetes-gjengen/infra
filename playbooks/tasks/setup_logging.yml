@@ -26,7 +26,7 @@
       Restart=always
       RestartSec=10
       # Auto-creates /run/fieldlog before start and - importantly - removes
-      # it on stop/crash/SIGKILL alike, so the session marker network_prober.sh
+      # it on stop/crash/SIGKILL alike, so the session marker the prober
       # reads never outlives this service without needing a script-side trap.
       RuntimeDirectory=fieldlog
       Environment="NODE_ID={{ inventory_hostname }}"

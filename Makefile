@@ -153,7 +153,7 @@ watch: ## Pick a live cluster view (scheduler logs, ...) and stream it. Ctrl-C t
 # via `systemctl set-environment` instead survives the wipe - it lives in
 # the systemd manager's own process, not the filesystem - and the script
 # writes whatever id it resolves back into the marker on startup anyway, so
-# network_prober.sh's marker-polling keeps working unchanged.
+# the prober's marker-polling keeps working unchanged.
 start-logging: ## Sync node clocks, then start field-test resource logging on all nodes (LIMIT=<host> for one; SESSION=<id> to rejoin an existing experiment)
 	$(ANSIBLE) sync_time.yml $(LIMIT_FLAG)
 	$(WITH_ENV) cd $(PLAYBOOK_DIR) && ansible all -b -m ansible.builtin.command \
