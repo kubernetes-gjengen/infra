@@ -24,6 +24,14 @@ ifdef LIMIT
   LIMIT_FLAG := --limit $(LIMIT)
 endif
 
+# start-logging's session id: the laptop's own clock, computed once here
+# rather than left to each node to mint its own on service start (that's
+# what used to scatter one experiment across N slightly-different ids - see
+# fieldlog_resource.sh). Override to rejoin an existing experiment when
+# retrying a node that failed to start, e.g.
+#   make start-logging LIMIT=worker7 SESSION=20260807T101616Z
+SESSION ?= $(shell date -u +%Y%m%dT%H%M%SZ)
+
 # Pass TAGS=prober or SKIP=prober as needed. Other tags: configure_prompt,
 # fetch_kubeconfig, detect_capabilities, gps_hat.
 ifdef TAGS
@@ -33,7 +41,7 @@ ifdef SKIP
   SKIP_FLAG := --skip-tags $(SKIP)
 endif
 
-.PHONY: help discover discover-model ping status identify provision reset reboot kubeconfig kubeconfig-copy deploy label watch registry-trust deploy-scheduler start-logging stop-logging collect-logs known-hosts-reset venividivici-build venividivici-apply venividivici-logs venividivici-delete venividivici-rollout
+.PHONY: help discover discover-model ping status identify provision reset reboot kubeconfig kubeconfig-copy deploy label watch registry-trust deploy-scheduler start-logging stop-logging collect-logs known-hosts-reset venividivici-build venividivici-apply venividivici-logs venividivici-delete venividivici-rollout field-phase-one field-phase-two
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*##"; printf "\nUsage:\n  make \033[36m<target>\033[0m [LIMIT=<host>]\n\nTargets:\n"} \
@@ -135,14 +143,45 @@ registry-trust: ## Configure THIS machine to push to the Zot registry (fetches t
 watch: ## Pick a live cluster view (scheduler logs, ...) and stream it. Ctrl-C to stop.
 	@shellscripts/watchctl.sh
 
-start-logging: ## Sync node clocks, then start field-test resource logging on all nodes (LIMIT=<host> for one)
+# fieldlog-resource.service's RuntimeDirectory=fieldlog (see
+# fieldlog_resource.sh) is recreated - wiping any pre-existing contents -
+# every time systemd (re)starts the unit, not just when it stops. Seeding
+# the session id into /run/fieldlog/session_id *before* `systemctl start`
+# used to race that wipe: the marker got clobbered the instant the service
+# started, so the script fell back to self-minting its own id from its own
+# (possibly clock-drifted) system time instead of the laptop's. Seeding it
+# via `systemctl set-environment` instead survives the wipe - it lives in
+# the systemd manager's own process, not the filesystem - and the script
+# writes whatever id it resolves back into the marker on startup anyway, so
+# network_prober.sh's marker-polling keeps working unchanged.
+start-logging: ## Sync node clocks, then start field-test resource logging on all nodes (LIMIT=<host> for one; SESSION=<id> to rejoin an existing experiment)
 	$(ANSIBLE) sync_time.yml $(LIMIT_FLAG)
+	$(WITH_ENV) cd $(PLAYBOOK_DIR) && ansible all -b -m ansible.builtin.command \
+		-a "systemctl set-environment FIELDLOG_SESSION_ID=$(SESSION)" $(LIMIT_FLAG)
 	$(WITH_ENV) cd $(PLAYBOOK_DIR) && ansible all -b -m ansible.builtin.command -a "systemctl start fieldlog-resource" $(LIMIT_FLAG)
+	@echo "session: $(SESSION)"
 
 stop-logging: ## Stop field-test resource logging on all nodes (LIMIT=<host> for one)
 	$(WITH_ENV) cd $(PLAYBOOK_DIR) && ansible all -b -m ansible.builtin.command -a "systemctl stop fieldlog-resource" $(LIMIT_FLAG)
+	$(WITH_ENV) cd $(PLAYBOOK_DIR) && ansible all -b -m ansible.builtin.command -a "systemctl unset-environment FIELDLOG_SESSION_ID" $(LIMIT_FLAG)
 
-collect-logs: ## Fetch fieldlog CSVs, scheduler journal, and radio-wrapper app pod logs into collected-logs/<timestamp>/
-	$(eval TS := $(shell date +%Y%m%d-%H%M%S))
-	$(ANSIBLE) collect_logs.yml -e collect_dir=$(CURDIR)/collected-logs/$(TS)
-	@echo "Logs collected to collected-logs/$(TS)/"
+collect-logs: ## Fetch fieldlog CSVs, scheduler journal, and radio-wrapper app pod logs into collected-logs/synced/ (rsync/fetch skip files already present unchanged, so re-running only pulls sessions that aren't on the laptop yet)
+	$(ANSIBLE) collect_logs.yml -e collect_dir=$(CURDIR)/collected-logs/synced
+	@echo "Logs synced to collected-logs/synced/"
+
+## Experiment (no-router field setup: laptop plugged directly into manager)
+#
+# Two-phase switchover, see MANAGER_WIRED_IP/WIRED_SCAN_SUBNET in .env.example.
+# Phase 1 runs while manager is still reachable on the router/switch LAN, to
+# push its static eth0 IP. Phase 2 runs after physically moving the cable and
+# giving your own laptop's NIC a static IP in the same subnet - that part
+# isn't automatable, it's your machine, not a Pi.
+
+field-phase-one: ## Push manager's static eth0 IP (MANAGER_WIRED_IP) - run BEFORE moving the cable, while still on the router/switch LAN
+	@$(WITH_ENV) [ -n "$$MANAGER_WIRED_IP" ] || { echo "MANAGER_WIRED_IP not set in .env - see .env.example"; exit 1; }
+	$(ANSIBLE) provision_all.yml --limit manager0
+
+field-phase-two: ## Verify manager0 after the cable swap - run AFTER unplugging the router, plugging laptop into manager, setting laptop's NIC static, and updating WIRED_SCAN_SUBNET in .env
+	@$(WITH_ENV) [ -n "$$MANAGER_WIRED_IP" ] || { echo "MANAGER_WIRED_IP not set in .env - see .env.example"; exit 1; }
+	$(WITH_ENV) cd $(PLAYBOOK_DIR) && python3 inventories/discover.py --list
+	cd $(PLAYBOOK_DIR) && ansible manager0 -m ping

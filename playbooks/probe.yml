@@ -139,7 +139,7 @@
       Environment="PROBE_PORT={{ prober_port }}"
       Environment="LATENCY_INTERVAL={{ prober_latency_interval }}"
       Environment="LATENCY_SAMPLES={{ prober_latency_samples }}"
-      Environment="THROUGHPUT_INTERVAL={{ prober_throughput_interval }}"
+      Environment="THROUGHPUT_GAP_MS={{ prober_throughput_gap_ms }}"
       Environment="THROUGHPUT_DURATION_MS={{ prober_throughput_duration_ms }}"
       Environment="DISCOVERY_INTERVAL={{ prober_discovery_interval }}"
       Environment="PROBE_TIMEOUT_MS={{ prober_timeout_ms }}"

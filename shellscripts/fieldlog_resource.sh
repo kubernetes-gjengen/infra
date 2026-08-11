@@ -8,15 +8,37 @@ INTERVAL="${INTERVAL:-5}"
 MAX_SIZE_KB="${MAX_SIZE_KB:-10240}"
 SESSION_MARKER="${SESSION_MARKER:-/run/fieldlog/session_id}"
 
-# One session = one start-logging/stop-logging cycle: a fresh SESSION_ID
-# (and a fresh file) every time this script starts, instead of appending to
-# the same file across every session forever. network_prober.sh reads
-# SESSION_MARKER to scope its own network/route CSVs to the same session and
-# to know whether a session is active at all. fieldlog-resource.service's
-# RuntimeDirectory=fieldlog creates and - critically - removes /run/fieldlog
-# around this script's lifetime, so the marker (and the "session active"
-# signal) disappears on stop, crash, or SIGKILL alike, with no trap needed.
-SESSION_ID="$(date -u +%Y%m%dT%H%M%SZ)"
+# One session = one start-logging/stop-logging cycle across the whole
+# fleet, identified by a single id (laptop clock, not each node's own) -
+# `make start-logging` sets FIELDLOG_SESSION_ID via `systemctl
+# set-environment` before starting this service, so a normal run and a
+# LIMIT=<host> retry to rejoin a failed node both land on the *same* id
+# instead of each node minting its own from a slightly different (and
+# possibly clock-drifted, see sync_time.yml) local start time.
+#
+# Not SESSION_MARKER for this: fieldlog-resource.service's
+# RuntimeDirectory=fieldlog recreates /run/fieldlog - wiping any
+# pre-existing contents - every time systemd (re)starts the unit, not just
+# when it stops. A marker written by ansible *before* `systemctl start`
+# raced that wipe and always lost, silently falling back to self-minting.
+# The environment var lives in the systemd manager's own process, so it
+# survives the directory wipe. SESSION_MARKER is still where *this script*
+# publishes whatever id it resolved, every start - network_prober.sh reads
+# it to scope its own CSVs to the same session and to know whether a
+# session is active at all - and it's still what a bare manual `systemctl
+# start` (no env var set) falls back to reusing, then finally self-mints if
+# neither is present.
+# fieldlog-resource.service's RuntimeDirectory=fieldlog creates and -
+# critically - removes /run/fieldlog around this script's lifetime, so the
+# marker (and the "session active" signal) disappears on stop, crash, or
+# SIGKILL alike, with no trap needed.
+SESSION_ID="${FIELDLOG_SESSION_ID:-}"
+if [ -z "$SESSION_ID" ]; then
+  SESSION_ID="$(cat "$SESSION_MARKER" 2>/dev/null)"
+fi
+if [ -z "$SESSION_ID" ]; then
+  SESSION_ID="$(date -u +%Y%m%dT%H%M%SZ)"
+fi
 echo "$SESSION_ID" >"$SESSION_MARKER"
 
 LOG_FILE="$LOG_DIR/$NODE_ID-resource-$SESSION_ID.csv"

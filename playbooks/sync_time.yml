@@ -19,6 +19,62 @@
   ignore_unreachable: true
 
   tasks:
+    # manager0's "local stratum 10" server mode (configure_ntp.yml) makes
+    # every other node agree with *it*, but never checks whether manager0
+    # itself is right - a Pi with no battery-backed RTC boots to whatever
+    # its last-known (or firmware-default) time was, and chrony happily
+    # reports "synced" once the rest of the mesh matches that, however wrong
+    # it is. Observed in practice: manager0 free-running 6 days behind
+    # actual UTC, with every worker perfectly (and uselessly) synced to
+    # that wrong time. The laptop running `make start-logging` has no such
+    # problem (real RTC, normally on the internet between field tests), so
+    # it's the one trustworthy clock in the whole chain - stamp manager0
+    # with the laptop's own current UTC time before the resync below
+    # propagates it to everyone else. Gated to manager0 rather than a
+    # separate play targeting the manager group - a LIMIT=<worker> retry
+    # that doesn't touch manager0 correctly skips this, since nothing here
+    # needs redoing.
+    # timedatectl refuses a manual set-time whenever it considers *any*
+    # known NTP provider active - and that check isn't scoped to
+    # systemd-timesyncd (`timedatectl set-ntp false` only ever toggles
+    # that unit specifically, which isn't even installed here per
+    # configure_ntp.yml). chrony.service itself is what's flagged active
+    # ("NTP service: active" in `timedatectl status`, confirmed live -
+    # "Failed to set time: Automatic time synchronization is enabled"),
+    # server-mode-only or not, so it has to come down for this to work -
+    # stop it, correct the clock, bring it back up.
+    #
+    # Deliberately NOT touching dnsmasq's DHCP leases here, even though the
+    # clock jump above makes their stored absolute expiry look stale: every
+    # worker is reached (by ansible and by hand) via ProxyCommand -W through
+    # manager0, which resolves <node>.gotham via manager0's own dnsmasq - so
+    # restarting dnsmasq mid-session, even briefly, breaks the one path used
+    # to reach every worker at all. Tried it live once: all 4 workers went
+    # UNREACHABLE the instant dnsmasq restarted, needed a manual lease
+    # restore to recover. A lease that merely *looks* expired but is still
+    # in dnsmasq's table typically keeps answering until something forces a
+    # change - much safer than a guaranteed connectivity break. If stale
+    # lease data becomes a real problem, fix it client-side (each worker
+    # renewing its own lease after its own clock resyncs) instead - never
+    # restart dnsmasq itself as part of this playbook.
+    - name: Stop chrony so timedatectl will accept a manual correction
+      ansible.builtin.systemd_service:
+        name: chrony
+        state: stopped
+      when: "'manager' in group_names"
+
+    - name: Correct manager0's own absolute clock from the laptop's (its own upstream reference has no internet either)
+      ansible.builtin.command: >-
+        timedatectl set-time "{{ lookup('pipe', 'date -u +%Y-%m-%d\ %H:%M:%S') }}"
+      changed_when: true
+      when: "'manager' in group_names"
+
+    - name: Restart chrony now that the clock is corrected
+      ansible.builtin.systemd_service:
+        name: chrony
+        state: started
+      when: "'manager' in group_names"
+
     - name: Force an immediate resync
       ansible.builtin.command: chronyc makestep
       changed_when: false

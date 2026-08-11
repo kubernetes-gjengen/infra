@@ -19,6 +19,17 @@ mesh_dhcp_start: "{{ lookup('env', 'MESH_DHCP_START') | default('192.168.42.2', 
 mesh_dhcp_end: "{{ lookup('env', 'MESH_DHCP_END') | default('192.168.42.254', true) }}"
 mesh_dhcp_lease_hours: "{{ lookup('env', 'MESH_DHCP_LEASE_HOURS') | default('12', true) }}"
 
+# Manager's static eth0 address for a no-router field setup (laptop's
+# ethernet plugged directly into the manager, nothing handing out DHCP on
+# that link). Empty (default) keeps eth0 on dhcp4 - the normal
+# router/switch-on-the-wired-LAN case, unchanged. Set together with
+# WIRED_SCAN_SUBNET so discover.py's ARP scan matches the subnet this
+# actually puts eth0 on. templates/90-netplan-workers.yml.j2 consumes this;
+# only applies to the manager - workers don't need a wired address at all
+# once already provisioned (they're reached over the mesh, see
+# discover.py's mesh-proxy fallback).
+manager_wired_ip: "{{ lookup('env', 'MANAGER_WIRED_IP') | default('', true) }}"
+
 # Derived from manager_mesh_ip's first 3 octets, not its own env var - the
 # repo otherwise only uses ansible.builtin (no ipaddr filter / netcommon
 # collection available), so this is plain string manipulation rather than a
@@ -94,8 +105,8 @@ fieldlog_all_routes: "{{ lookup('env', 'FIELDLOG_ALL_ROUTES') | default('false',
 prober_port: "{{ lookup('env', 'PROBER_PORT') | default('5210', true) }}"
 prober_latency_interval: "{{ lookup('env', 'PROBER_LATENCY_INTERVAL') | default('5', true) }}"
 prober_latency_samples: "{{ lookup('env', 'PROBER_LATENCY_SAMPLES') | default('5', true) }}"
-prober_throughput_interval: "{{ lookup('env', 'PROBER_THROUGHPUT_INTERVAL') | default('30', true) }}"
-prober_throughput_duration_ms: "{{ lookup('env', 'PROBER_THROUGHPUT_DURATION_MS') | default('3000', true) }}"
+prober_throughput_gap_ms: "{{ lookup('env', 'PROBER_THROUGHPUT_GAP_MS') | default('1500', true) }}"
+prober_throughput_duration_ms: "{{ lookup('env', 'PROBER_THROUGHPUT_DURATION_MS') | default('1500', true) }}"
 prober_discovery_interval: "{{ lookup('env', 'PROBER_DISCOVERY_INTERVAL') | default('60', true) }}"
 prober_timeout_ms: "{{ lookup('env', 'PROBER_TIMEOUT_MS') | default('800', true) }}"
 

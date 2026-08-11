@@ -265,8 +265,6 @@ capabilities:
     become: false
     timeout: 5
     hosts: all
-    # Matches Pi 3 A+/B/B+. Pi 4 nodes deliberately left unlabeled here —
-    # add a Pi 4 branch if you ever add Pi 4 nodes to the light-worker pool.
     command: |
       MODEL=$(cat /proc/device-tree/model 2>/dev/null | tr -d '\0')
       if [ -z "$MODEL" ]; then exit 2; fi

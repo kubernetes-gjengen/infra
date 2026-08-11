@@ -13,4 +13,10 @@ network:
       dhcp4: true
 {% endif %}
     eth0:
+{% if 'manager' in group_names and manager_wired_ip %}
+      dhcp4: false
+      addresses:
+        - {{ manager_wired_ip }}/24
+{% else %}
       dhcp4: true
+{% endif %}

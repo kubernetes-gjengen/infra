@@ -1,18 +1,7 @@
 {
-  "b8:27:eb:58:63:60": "worker6",
-  "b8:27:eb:6b:ff:a9": "worker1",
   "b8:27:eb:7a:b3:de": "worker10",
-  "b8:27:eb:90:db:5d": "worker2",
-  "b8:27:eb:92:10:b6": "worker12",
   "b8:27:eb:98:68:ff": "worker11",
-  "b8:27:eb:9b:67:7b": "worker4",
-  "b8:27:eb:bc:3a:28": "worker3",
-  "b8:27:eb:f2:e9:35": "worker5",
-  "b8:27:eb:fd:79:bb": "worker0",
   "b8:27:eb:fe:d5:73": "worker9",
-  "d8:3a:dd:e1:84:b4": "worker15",
-  "d8:3a:dd:f5:36:c7": "worker13",
-  "d8:3a:dd:f5:39:ad": "worker14",
-  "d8:3a:dd:f5:43:87": "manager0",
-  "d8:3a:dd:f5:44:51": "worker8"
+  "d8:3a:dd:e1:84:b4": "manager0",
+  "d8:3a:dd:f5:43:87": "worker7"
 }
