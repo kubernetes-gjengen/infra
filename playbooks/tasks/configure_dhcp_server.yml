@@ -22,11 +22,11 @@
     regexp: '^\s*#?FallbackDNS\b'
     line: "FallbackDNS="
 
-- name: Set .{{ gotham_domain }} as the local DNS search domain
+- name: Set .{{ mesh_domain }} as the local DNS search domain
   ansible.builtin.lineinfile:
     path: /etc/systemd/resolved.conf
     regexp: '^\s*#?Domains\b'
-    line: "Domains=~{{ gotham_domain }}"
+    line: "Domains=~{{ mesh_domain }}"
 
 - name: Disable systemd-resolved stub listener so dnsmasq can bind port 53
   ansible.builtin.lineinfile:

@@ -46,7 +46,6 @@ Idempotent, tag-scoped sequence of plays run against the dynamic inventory:
 | `config_batman2_electric_boogaloo.sh` | Each Pi | Stops NetworkManager/wpa_supplicant, puts `wlan0` in ad-hoc mode on SSID/channel from `MESH_SSID`/`MESH_CHANNEL`, loads `batman-adv`, brings up `bat0` — driven by `batman.service`, templated in by `tasks/00_configure_network_common.yml` |
 | `fieldlog_resource.sh` | Each Pi | Field-test CPU/mem/disk sampler; installed disabled, toggled by `make start-logging`/`stop-logging` |
 | `watchctl.sh` / `watch_links.sh` | Laptop (manual) | Live `watch`-style views into the cluster / live mesh link latency-throughput table sourced from MQTT |
-| `find_gps_pi.sh` | Laptop (manual) | SSHes the fleet to report which Pi has a GPS device attached |
 | `deployctl.sh` | Laptop (manual) | `make deploy` — picks and runs a sibling repo's k8s Deployment target |
 | `reset_known_hosts.sh` | Laptop (manual) | Clears stale SSH host keys after reflashing/reimaging a Pi |
 

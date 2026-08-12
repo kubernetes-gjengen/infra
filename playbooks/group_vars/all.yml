@@ -19,7 +19,7 @@ mesh_ssid: "{{ lookup('env', 'MESH_SSID') | default('meshnet', true) }}"
 mesh_channel: "{{ lookup('env', 'MESH_CHANNEL') | default('1', true) }}"
 
 # DNS suffix served by the manager's dnsmasq.
-gotham_domain: "{{ lookup('env', 'GOTHAM_DOMAIN') | default('gotham', true) }}"
+mesh_domain: "{{ lookup('env', 'MESH_DOMAIN') | default('gotham', true) }}"
 
 k3s_api_port: "{{ lookup('env', 'K3S_API_PORT') | default('6443', true) }}"
 

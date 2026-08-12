@@ -35,7 +35,7 @@ PI5_OUIS = ("d8:3a:dd", "e4:5f:01")
 SSH_USER = os.environ.get("PI_SSH_USER", "pi")
 SSH_PASSWORD = os.environ.get("PI_SSH_PASSWORD", "raspberry")
 
-GOTHAM_DOMAIN = os.environ.get("GOTHAM_DOMAIN", "gotham")
+MESH_DOMAIN = os.environ.get("MESH_DOMAIN", "gotham")
 
 # Resolved relative to this file, not cwd, so it works regardless of where ansible invokes it.
 STATE_PATH = Path(__file__).resolve().parent / "discovered_hosts.json"
@@ -237,7 +237,7 @@ def print_models():
         if wired_ip is not None:
             target, extra_args, shown_ip = wired_ip, None, wired_ip
         elif manager_wired_ip is not None and mac != manager_mac:
-            target = f"{name}.{GOTHAM_DOMAIN}"
+            target = f"{name}.{MESH_DOMAIN}"
             extra_args = mesh_proxy_extra_ssh_args(manager_wired_ip)
             shown_ip = target
         else:
@@ -296,7 +296,7 @@ def build_inventory():
         elif manager_wired_ip is not None and mac != manager_mac:
             # Off wired LAN, manager up - reach over mesh, proxied through manager.
             hostvars = {
-                "ansible_host": f"{name}.{GOTHAM_DOMAIN}",
+                "ansible_host": f"{name}.{MESH_DOMAIN}",
                 "ansible_user": SSH_USER,
                 "ansible_password": SSH_PASSWORD,
                 "ansible_become_pass": SSH_PASSWORD,

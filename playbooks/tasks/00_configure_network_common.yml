@@ -93,10 +93,10 @@
   register: netplan_cfg
 
 # bat0 comes up after eth0; containerd can hit this DNS name before bat0's resolver is ready.
-- name: Pin manager0.{{ gotham_domain }} in /etc/hosts (prevents DNS race on containerd startup)
+- name: Pin manager0.{{ mesh_domain }} in /etc/hosts (prevents DNS race on containerd startup)
   ansible.builtin.lineinfile:
     path: /etc/hosts
-    regexp: '\bmanager0\.{{ gotham_domain }}\b'
-    line: "{{ manager_mesh_ip }} manager0.{{ gotham_domain }} manager0"
+    regexp: '\bmanager0\.{{ mesh_domain }}\b'
+    line: "{{ manager_mesh_ip }} manager0.{{ mesh_domain }} manager0"
     state: present
 
