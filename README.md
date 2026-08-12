@@ -14,7 +14,7 @@ Dette repoet provisjonerer et selvstendig Raspberry Pi-cluster for felttesting a
 | K3s | Alle noder | Kubernetes-distribusjon for edge-enheter. Manager kjører kontrollplanet. |
 | dnsmasq | Manager | Deler ut DHCP-adresser og DNS-navn (`*.gotham`) på mesh-nettverket. |
 | Zot | Manager (pod) | OCI-register for container-images. Se `registry/README.md`. |
-| Mosquitto | Cluster (pod) | MQTT-megler. Samler sensor- og lenkedata fra alle noder. |
+| Mosquitto | Cluster (pod) | MQTT-broker. Samler sensor- og lenkedata fra alle noder. |
 | Nettverksprobe | Alle noder | Måler lenke-latens og -kapasitet. Publiserer resultatet til MQTT. |
 | Feltloggetjeneste | Alle noder | Logger CPU-, minne- og disk-bruk under et eksperiment. |
 | Egendefinert scheduler (`k8-scheduler`) | Manager | Plasserer poder etter mesh-topologi i stedet for standard Kubernetes-logikk. |
@@ -52,6 +52,10 @@ Krav til hver Raspberry Pi:
 6. Kjør `make provision` for å konfigurere mesh-nettverk, K3s og registerklarering.
 7. Kjør `make kubeconfig` for å hente cluster-tilgang til styremaskinen.
 8. Kjør `kubectl get nodes` for å bekrefte at hver node har status `Ready`.
+9. Kjør `kubectl apply -f mosquitto/mosquitto.yml` for å distribuere MQTT-broker.
+10. Følg `registry/README.md` for å sette opp Zot-registeret (krever et TLS-sertifikat).
+
+Steg 9 og 10 er nødvendige for et fungerende cluster: nettverksproben publiserer lenkedata til Mosquitto, og appdistribusjon (avsnitt 04) trenger et register å pushe images til.
 
 Provisjonering er idempotent. Kjør `make provision` på nytt for å verifisere eller reparere en node uten risiko.
 
@@ -70,7 +74,7 @@ Det finnes ingen statisk inventarfil å redigere. `inventories/discover.py` finn
 | `MESH_DHCP_LEASE_HOURS` | `12` | Lengden på hver DHCP-leieavtale, i timer. |
 | `MESH_SSID` | `meshnet` | Wi-Fi-navnet ad-hoc-nettverket bruker. Alle noder må bruke samme verdi. |
 | `MESH_CHANNEL` | `1` | Wi-Fi-kanalen ad-hoc-nettverket bruker. |
-| `GOTHAM_DOMAIN` | `gotham` | DNS-endelsen manager sin dnsmasq svarer på, f.eks. `manager0.gotham`. |
+| `MESH_DOMAIN` | `gotham` | DNS-endelsen manager sin dnsmasq svarer på, f.eks. `manager0.gotham`. |
 
 ### Kablet oppsettnett
 
@@ -78,7 +82,7 @@ Det finnes ingen statisk inventarfil å redigere. `inventories/discover.py` finn
 |---|---|---|
 | `WIRED_SCAN_SUBNET` | `192.168.67.0/24` | Nettet `discover.py` søker gjennom for å finne Pi-enheter. |
 | `MANAGER_WIRED_IP` | (tom) | Managerens faste `eth0`-IP. Kun nødvendig uten ruter i felt. Se `field-phase-one`/`field-phase-two` i avsnitt 04. |
-| `MANAGER_HOST` | `manager0.local` | Managerens mDNS-navn, brukt av `watchctl.sh` og `find_gps_pi.sh`. |
+| `MANAGER_HOST` | `manager0.local` | Managerens mDNS-navn, brukt av `watchctl.sh`. |
 
 ### Pi-tilgang
 
@@ -110,16 +114,18 @@ TLS-sertifikatet for registeret genereres manuelt, utenfor repoet. Se `registry/
 
 | Variabel | Standardverdi | Beskrivelse |
 |---|---|---|
-| `PROBE_MQTT_HOST` / `PROBE_MQTT_PORT` | `127.0.0.1` / `31883` | MQTT-megleren hver node publiserer lenkedata til. |
-| `MQTT_TOPIC_LINKDATA` | `network/linkdata` | MQTT-emnet lenkedata publiseres på. |
+| `PROBE_MQTT_HOST` / `PROBE_MQTT_PORT` | `127.0.0.1` / `31883` | MQTT-brokeren hver node publiserer lenkedata til. |
+| `MQTT_TOPIC_LINKDATA` | `network/linkdata` | MQTT-topicet lenkedata publiseres på. |
 
 ### venividivici
+
+**Merk:** venividivici er på et veldig tidlig utviklingsstadium (WIP). Bruk med forsiktighet.
 
 | Variabel | Standardverdi | Beskrivelse |
 |---|---|---|
 | `VENIVIDIVICI_POLL_INTERVAL` | `30` | Sekunder mellom hvert søk etter nye Pi-enheter. |
 | `VENIVIDIVICI_SSH_PROBE_TIMEOUT` | `5` | Sekunder før et SSH-forsøk mot en ny node gir opp. |
-| `VENIVIDIVICI_MQTT_BROKER` / `VENIVIDIVICI_MQTT_PORT` | `mosquitto.default.svc.cluster.local` / `1883` | MQTT-megleren i clusteret, brukt internt av venividivici. |
+| `VENIVIDIVICI_MQTT_BROKER` / `VENIVIDIVICI_MQTT_PORT` | `mosquitto.default.svc.cluster.local` / `1883` | MQTT-brokeren i clusteret, brukt internt av venividivici. |
 
 ## 04 - Bruk
 
@@ -132,7 +138,7 @@ make provision
 make kubeconfig
 ```
 
-Kjør `make help` for full liste over kommandoer, med beskrivelse. De fleste kommandoer godtar `LIMIT=<node>` for å begrense kjøringen til én node.
+Kjør `make help` for full liste over kommandoer, med beskrivelse. De fleste kommandoer godtar `LIMIT=<node>` for å begrense kjøringen til én node. `<node>` er hostnavnet fra `make discover` (`manager0`, `worker0`, `worker1`, ...). Eksempel: `make provision LIMIT=worker0`.
 
 ### Kjernekommandoer
 
@@ -185,7 +191,7 @@ Kjør `make help` for full liste over kommandoer, med beskrivelse. De fleste kom
 
 **Vedlikehold**
 
-* `make known-hosts-reset`: Fjerner gamle SSH-nøkler for alle noder. Kjør etter at en Pi er re-flashet.
+* `make known-hosts-reset`: Fjerner gamle SSH-nøkler for alle noder. Kjør etter at en Pi er re-flashet, eller når SSH varsler om at en host key ikke stemmer (`WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED`).
 
 **Felteksperiment uten ruter**
 
@@ -196,7 +202,9 @@ Kjør `make help` for full liste over kommandoer, med beskrivelse. De fleste kom
 
 * Symptom: `make provision` eller `make reset` feiler underveis.
   * Løsning: Kjør kommandoen på nytt. Vanlige årsaker er en låst apt-fil, en treg K3s-installasjon eller en node som ikke er ferdig oppstartet. En ny kjøring løser som regel dette.
-* Symptom: En worker svarer ikke på mesh-trafikk etter omstart.
+* Symptom: En worker er ikke synlig i mesh-trafikken (mangler i `batctl n`, eller svarer ikke på ping over `bat0`).
+  * Løsning: Kjør `make reboot LIMIT=<node>`. Løser som regel problemet.
+* Symptom: En worker svarer normalt i mesh-trafikken, men mangler eller er `NotReady` i `kubectl get nodes`.
   * Løsning: Koble til noden med SSH og kjør `systemctl restart k3s-agent`. Tjenesten kan ha startet på `eth0` før `bat0` var klar.
 * Symptom: En fjernet enhet (f.eks. GPS) har fortsatt sin kapabilitets-label på noden.
   * Løsning: Fjern labelen manuelt med `kubectl label node <node> capability/<navn>-`. Kapabilitetsdeteksjon fjerner aldri gamle labels automatisk.
@@ -205,7 +213,7 @@ Kjør `make help` for full liste over kommandoer, med beskrivelse. De fleste kom
 * Symptom: `docker push` mot registeret feiler med en sertifikatfeil.
   * Løsning: Kjør `make registry-trust` på maskinen som pusher.
 * Symptom: Et pushet image lar seg ikke hente ned på clusteret.
-  * Løsning: Kontroller at image-referansen er nøyaktig `manager0.gotham:30500/...`. Avvik fra denne strengen feiler.
+  * Løsning: Kontroller at image-referansen matcher `REGISTRY_HOST:REGISTRY_PORT` nøyaktig, satt i din `.env` (standardverdi `manager0.gotham:30500`, se avsnitt 03). Avvik fra denne strengen feiler.
 * Symptom: `make deploy ACTION=build` gjør ingenting for et image.
   * Løsning: Kjør byggekommandoen i det aktuelle repoet direkte. `deployctl.sh` har ingen generisk byggefunksjon.
 * Symptom: Clusteret mister all tilgang når manager går offline.
