@@ -1,135 +1,143 @@
 # infra
 
-Ansible- og shell-automatisering for et Raspberry Pi MANET-cluster med Kubernetes (K3s).
+Ansible and shell automation for a Raspberry Pi MANET cluster with Kubernetes (K3s).
 
-## 01 - Systembeskrivelse
+## 01 - System description
 
-Dette repoet provisjonerer et selvstendig Raspberry Pi-cluster for felttesting av edge-databehandling i mobile, oppkoblingssvake nettverk. Ansible setter opp hver node og kobler dem sammen med B.A.T.M.A.N. mesh-ruting (`batman-adv`) over Wi-Fi ad-hoc. Én node har rollen manager: den kjører K3s-kontrollplanet og deler ut IP-adresser og DNS-navn til resten av mesh-nettverket over `bat0`.
+This repo provisions a self-contained Raspberry Pi cluster for field-testing edge computing in mobile, low-connectivity networks.
+Ansible sets up each node and connects them with B.A.T.M.A.N. mesh routing (`batman-adv`) over Wi-Fi ad-hoc.
+One node has the manager role: it runs the K3s control plane and hands out IP addresses and DNS names to the rest of the mesh network over `bat0`.
 
-### Komponenter
+### Components
 
-| Komponent | Kjører på | Beskrivelse |
+| Component | Runs on | Description |
 |---|---|---|
-| Mesh-nettverk (`batman-adv`) | Alle noder | Ruter trafikk mellom noder uten fast infrastruktur. |
-| K3s | Alle noder | Kubernetes-distribusjon for edge-enheter. Manager kjører kontrollplanet. |
-| dnsmasq | Manager | Deler ut DHCP-adresser og DNS-navn (`*.gotham`) på mesh-nettverket. |
-| Zot | Manager (pod) | OCI-register for container-images. Se `registry/README.md`. |
-| Mosquitto | Cluster (pod) | MQTT-broker. Samler sensor- og lenkedata fra alle noder. |
-| Nettverksprobe | Alle noder | Måler lenke-latens og -kapasitet. Publiserer resultatet til MQTT. |
-| Feltloggetjeneste | Alle noder | Logger CPU-, minne- og disk-bruk under et eksperiment. |
-| Egendefinert scheduler (`k8-scheduler`) | Manager | Plasserer poder etter mesh-topologi i stedet for standard Kubernetes-logikk. |
-| venividivici | Manager (pod) | Overvåker det kablede nettet og provisjonerer nye Raspberry Pi-enheter automatisk. |
-| Dashboard | Cluster (pod) | Samlesider for cluster-status og apper. Nås på `http://dashboard.gotham`. |
+| Mesh network (`batman-adv`) | All nodes | Routes traffic between nodes without fixed infrastructure. |
+| K3s | All nodes | Kubernetes distribution for edge devices. Manager runs the control plane. |
+| dnsmasq | Manager | Hands out DHCP addresses and DNS names (`*.gotham`) on the mesh network. |
+| Zot | Manager (pod) | OCI registry for container images. See `registry/README.md`. |
+| Mosquitto | Cluster (pod) | MQTT broker. Collects sensor and link data from all nodes. |
+| Network prober | All nodes | Measures link latency and throughput. Publishes the result to MQTT. |
+| Field logging service | All nodes | Logs CPU, memory and disk usage during an experiment. |
+| Custom scheduler (`k8-scheduler`) | Manager | Places pods based on mesh topology instead of default Kubernetes logic. |
+| venividivici | Manager (pod) | Watches the wired network and provisions new Raspberry Pi devices automatically. |
+| Dashboard | Cluster (pod) | Overview pages for cluster status and apps. Reachable at `http://dashboard.gotham`. |
 
-Applikasjoner som kjører på clusteret (objektdeteksjon, radioklassifisering, GPS-klient) ligger i egne repoer ved siden av dette. Se avsnitt 04 for hvordan de distribueres herfra.
+Applications that run on the cluster (object detection, radio classification, GPS client) live in separate repos alongside this one.
+See section 04 for how they are deployed from here.
 
-## 02 - Installasjon og krav
+## 02 - Installation and requirements
 
-### Forutsetninger
+### Prerequisites
 
-Krav til styremaskinen (laptopen du kjører Ansible fra):
+Requirements for the control machine (the laptop you run Ansible from):
 
-* `ansible` og `python3`
+* `ansible` and `python3`
 * `kubectl`
-* Passordløs `sudo nmap`. `inventories/discover.py` bruker den til å søke etter Pi-enheter på nettet.
-* `fzf`. Kreves av `make deploy` og `make watch`.
-* `sshpass`. Kreves av `make watch`. Pi-enhetene bruker passord, ikke SSH-nøkkel, som standard.
-* Go med `GOOS=linux GOARCH=arm64` kryss-kompilering. Kreves kun av `make deploy-scheduler`.
+* Passwordless `sudo nmap`. `inventories/discover.py` uses it to scan the network for Pi devices.
+* `fzf`. Required by `make deploy` and `make watch`.
+* `sshpass`. Required by `make watch`. The Pi devices use a password, not an SSH key, by default.
+* Go with `GOOS=linux GOARCH=arm64` cross-compilation. Required only by `make deploy-scheduler`.
 
-Krav til hver Raspberry Pi:
+Requirements for each Raspberry Pi:
 
-* Uendret Raspberry Pi OS-image.
-* Standard SSH-brukernavn og -passord (`pi` / `raspberry`), eller egne verdier satt i `.env`.
-* Tilkobling til samme kablede nett som styremaskinen, for førstegangs oppdagelse.
+* Unmodified Raspberry Pi OS image.
+* Default SSH username and password (`pi` / `raspberry`), or custom values set in `.env`.
+* Connection to the same wired network as the control machine, for initial discovery.
 
-### Installasjonssteg
+### Installation steps
 
-1. Klon dette repoet.
-2. Kjør `cp .env.example .env` i repo-roten.
-3. Rediger `.env` hvis standardverdiene ikke passer nettverket ditt. Se avsnitt 03.
-4. Koble alle Raspberry Pi-enhetene til det kablede oppsettnettet.
-5. Kjør `make discover` for å bekrefte at systemet finner alle enhetene.
-6. Kjør `make provision` for å konfigurere mesh-nettverk, K3s og registerklarering.
-7. Kjør `make kubeconfig` for å hente cluster-tilgang til styremaskinen.
-8. Kjør `kubectl get nodes` for å bekrefte at hver node har status `Ready`.
-9. Kjør `kubectl apply -f mosquitto/mosquitto.yml` for å distribuere MQTT-broker.
-10. Følg `registry/README.md` for å sette opp Zot-registeret (krever et TLS-sertifikat).
+1. Clone this repo.
+2. Run `cp .env.example .env` in the repo root.
+3. Edit `.env` if the default values do not match your network. See section 03.
+4. Connect all Raspberry Pi devices to the wired setup network.
+5. Run `make discover` to confirm the system finds all the devices.
+6. Run `make provision` to configure the mesh network, K3s and registry trust.
+7. Run `make kubeconfig` to get cluster access on the control machine.
+8. Run `kubectl get nodes` to confirm every node has status `Ready`.
+9. Run `kubectl apply -f mosquitto/mosquitto.yml` to deploy the MQTT broker.
+10. Follow `registry/README.md` to set up the Zot registry (requires a TLS certificate).
 
-Steg 9 og 10 er nødvendige for et fungerende cluster: nettverksproben publiserer lenkedata til Mosquitto, og appdistribusjon (avsnitt 04) trenger et register å pushe images til.
+Steps 9 and 10 are required for a working cluster: the network prober publishes link data to Mosquitto, and app deployment (section 04) needs a registry to push images to.
 
-Provisjonering er idempotent. Kjør `make provision` på nytt for å verifisere eller reparere en node uten risiko.
+Provisioning is idempotent.
+Run `make provision` again to verify or repair a node without risk.
 
-## 03 - Konfigurasjon
+## 03 - Configuration
 
-All konfigurasjon skjer i `.env`, kopiert fra `.env.example`. Ansible leser de samme verdiene via `playbooks/group_vars/all.yml`, med de samme standardverdiene som fallback.
+All configuration happens in `.env`, copied from `.env.example`.
+Ansible reads the same values through `playbooks/group_vars/all.yml`, with the same default values as fallback.
 
-Det finnes ingen statisk inventarfil å redigere. `inventories/discover.py` finner Pi-enheter på nettet selv, og lagrer MAC-til-navn-tilordninger i `inventories/discovered_hosts.json`. Denne filen ligger i git og følger med repoet mellom maskiner.
+There is no static inventory file to edit.
+`inventories/discover.py` finds Pi devices on the network itself, and stores MAC-to-name mappings in `inventories/discovered_hosts.json`.
+This file is tracked in git and travels with the repo between machines.
 
-### Mesh-nettverk
+### Mesh network
 
-| Variabel | Standardverdi | Beskrivelse |
+| Variable | Default value | Description |
 |---|---|---|
-| `MESH_MANAGER_IP` | `192.168.42.1` | Managerens faste IP på `bat0`. |
-| `MESH_DHCP_START` / `MESH_DHCP_END` | `192.168.42.2` – `192.168.42.254` | DHCP-området manager deler ut til workere på `bat0`. |
-| `MESH_DHCP_LEASE_HOURS` | `12` | Lengden på hver DHCP-leieavtale, i timer. |
-| `MESH_SSID` | `meshnet` | Wi-Fi-navnet ad-hoc-nettverket bruker. Alle noder må bruke samme verdi. |
-| `MESH_CHANNEL` | `1` | Wi-Fi-kanalen ad-hoc-nettverket bruker. |
-| `MESH_DOMAIN` | `gotham` | DNS-endelsen manager sin dnsmasq svarer på, f.eks. `manager0.gotham`. |
+| `MESH_MANAGER_IP` | `192.168.42.1` | The manager's fixed IP on `bat0`. |
+| `MESH_DHCP_START` / `MESH_DHCP_END` | `192.168.42.2` - `192.168.42.254` | The DHCP range the manager hands out to workers on `bat0`. |
+| `MESH_DHCP_LEASE_HOURS` | `12` | The length of each DHCP lease, in hours. |
+| `MESH_SSID` | `meshnet` | The Wi-Fi name the ad-hoc network uses. All nodes must use the same value. |
+| `MESH_CHANNEL` | `1` | The Wi-Fi channel the ad-hoc network uses. |
+| `MESH_DOMAIN` | `gotham` | The DNS suffix the manager's dnsmasq answers on, e.g. `manager0.gotham`. |
 
-### Kablet oppsettnett
+### Wired setup network
 
-| Variabel | Standardverdi | Beskrivelse |
+| Variable | Default value | Description |
 |---|---|---|
-| `WIRED_SCAN_SUBNET` | `192.168.67.0/24` | Nettet `discover.py` søker gjennom for å finne Pi-enheter. |
-| `MANAGER_WIRED_IP` | (tom) | Managerens faste `eth0`-IP. Kun nødvendig uten ruter i felt. Se `field-phase-one`/`field-phase-two` i avsnitt 04. |
-| `MANAGER_HOST` | `manager0.local` | Managerens mDNS-navn, brukt av `watchctl.sh`. |
+| `WIRED_SCAN_SUBNET` | `192.168.67.0/24` | The network `discover.py` scans to find Pi devices. |
+| `MANAGER_WIRED_IP` | (empty) | The manager's fixed `eth0` IP. Only needed without a router in the field. See `field-phase-one`/`field-phase-two` in section 04. |
+| `MANAGER_HOST` | `manager0.local` | The manager's mDNS name, used by `watchctl.sh`. |
 
-### Pi-tilgang
+### Pi access
 
-| Variabel | Standardverdi | Beskrivelse |
+| Variable | Default value | Description |
 |---|---|---|
-| `PI_SSH_USER` | `pi` | Brukernavn for SSH mot hver Pi. |
-| `PI_SSH_PASSWORD` | `raspberry` | Passord for SSH mot hver Pi. Dette er Raspberry Pi OS sin offentlig kjente standardverdi, ikke en hemmelighet. |
+| `PI_SSH_USER` | `pi` | Username for SSH to each Pi. |
+| `PI_SSH_PASSWORD` | `raspberry` | Password for SSH to each Pi. This is Raspberry Pi OS's publicly known default value, not a secret. |
 
-### K3s og register
+### K3s and registry
 
-| Variabel | Standardverdi | Beskrivelse |
+| Variable | Default value | Description |
 |---|---|---|
-| `K3S_API_PORT` | `6443` | Porten K3s sin API-server lytter på. |
-| `REGISTRY_HOST` / `REGISTRY_PORT` | `manager0.gotham` / `30500` | Adressen til Zot-registeret. Hver image-referanse i clusteret må matche denne verdien nøyaktig. |
+| `K3S_API_PORT` | `6443` | The port K3s's API server listens on. |
+| `REGISTRY_HOST` / `REGISTRY_PORT` | `manager0.gotham` / `30500` | The address of the Zot registry. Every image reference in the cluster must match this value exactly. |
 
-TLS-sertifikatet for registeret genereres manuelt, utenfor repoet. Se `registry/README.md`.
+The TLS certificate for the registry is generated manually, outside the repo.
+See `registry/README.md`.
 
-### Feltlogging
+### Field logging
 
-| Variabel | Standardverdi | Beskrivelse |
+| Variable | Default value | Description |
 |---|---|---|
-| `FIELDLOG_INTERVAL` | `5` | Sekunder mellom hver måling av CPU/minne/disk. |
-| `FIELDLOG_MAX_SIZE_KB` | `10240` | Maksimal filstørrelse før loggfilen roteres. |
-| `FIELDLOG_ALL_ROUTES` | `false` | `true` logger også ruter som ikke er i bruk. Kun til feilsøking. |
-| `SCHEDULER_LOG_WINDOW` | `2 hours ago` | Hvor langt tilbake `make collect-logs` henter scheduler-logger. |
-| `APP_LOG_WINDOW` | `2h` | Hvor langt tilbake `make collect-logs` henter applikasjonslogger. |
+| `FIELDLOG_INTERVAL` | `5` | Seconds between each CPU/memory/disk measurement. |
+| `FIELDLOG_MAX_SIZE_KB` | `10240` | Maximum file size before the log file is rotated. |
+| `FIELDLOG_ALL_ROUTES` | `false` | `true` also logs routes not in use. For troubleshooting only. |
+| `SCHEDULER_LOG_WINDOW` | `2 hours ago` | How far back `make collect-logs` fetches scheduler logs. |
+| `APP_LOG_WINDOW` | `2h` | How far back `make collect-logs` fetches application logs. |
 
-### Nettverksprobe og MQTT
+### Network prober and MQTT
 
-| Variabel | Standardverdi | Beskrivelse |
+| Variable | Default value | Description |
 |---|---|---|
-| `PROBE_MQTT_HOST` / `PROBE_MQTT_PORT` | `127.0.0.1` / `31883` | MQTT-brokeren hver node publiserer lenkedata til. |
-| `MQTT_TOPIC_LINKDATA` | `network/linkdata` | MQTT-topicet lenkedata publiseres på. |
+| `PROBE_MQTT_HOST` / `PROBE_MQTT_PORT` | `127.0.0.1` / `31883` | The MQTT broker each node publishes link data to. |
+| `MQTT_TOPIC_LINKDATA` | `network/linkdata` | The MQTT topic link data is published on. |
 
 ### venividivici
 
-**Merk:** venividivici er på et veldig tidlig utviklingsstadium (WIP). Bruk med forsiktighet.
+**Note:** venividivici is at a very early development stage (WIP). Use with caution.
 
-| Variabel | Standardverdi | Beskrivelse |
+| Variable | Default value | Description |
 |---|---|---|
-| `VENIVIDIVICI_POLL_INTERVAL` | `30` | Sekunder mellom hvert søk etter nye Pi-enheter. |
-| `VENIVIDIVICI_SSH_PROBE_TIMEOUT` | `5` | Sekunder før et SSH-forsøk mot en ny node gir opp. |
-| `VENIVIDIVICI_MQTT_BROKER` / `VENIVIDIVICI_MQTT_PORT` | `mosquitto.default.svc.cluster.local` / `1883` | MQTT-brokeren i clusteret, brukt internt av venividivici. |
+| `VENIVIDIVICI_POLL_INTERVAL` | `30` | Seconds between each scan for new Pi devices. |
+| `VENIVIDIVICI_SSH_PROBE_TIMEOUT` | `5` | Seconds before an SSH attempt to a new node gives up. |
+| `VENIVIDIVICI_MQTT_BROKER` / `VENIVIDIVICI_MQTT_PORT` | `mosquitto.default.svc.cluster.local` / `1883` | The MQTT broker in the cluster, used internally by venividivici. |
 
-## 04 - Bruk
+## 04 - Usage
 
-### Hurtigstart
+### Quick start
 
 ```bash
 cp .env.example .env
@@ -138,83 +146,86 @@ make provision
 make kubeconfig
 ```
 
-Kjør `make help` for full liste over kommandoer, med beskrivelse. De fleste kommandoer godtar `LIMIT=<node>` for å begrense kjøringen til én node. `<node>` er hostnavnet fra `make discover` (`manager0`, `worker0`, `worker1`, ...). Eksempel: `make provision LIMIT=worker0`.
+Run `make help` for the full list of commands, with descriptions.
+Most commands accept `LIMIT=<node>` to restrict the run to one node.
+`<node>` is the hostname from `make discover` (`manager0`, `worker0`, `worker1`, ...).
+Example: `make provision LIMIT=worker0`.
 
-### Kjernekommandoer
+### Core commands
 
-**Oppdagelse**
+**Discovery**
 
-* `make discover`: Lister Pi-enheter funnet på nettet. Ingen SSH-tilkobling.
-* `make discover-model`: Som over, men kobler til hver enhet og viser Pi-modell.
-* `make ping`: Ansible-ping mot alle oppdagede noder.
-* `make status`: Viser apt/dpkg-aktivitet på alle noder. Brukes til å se om provisjonering henger.
-* `make identify LIMIT=<node>`: Blinker en Pi sin aktivitets-LED i 30 sekunder.
+* `make discover`: Lists Pi devices found on the network. No SSH connection.
+* `make discover-model`: Same as above, but connects to each device and shows the Pi model.
+* `make ping`: Ansible ping against all discovered nodes.
+* `make status`: Shows apt/dpkg activity on all nodes. Used to check whether provisioning is stuck.
+* `make identify LIMIT=<node>`: Blinks a Pi's activity LED for 30 seconds.
 
-**Provisjonering**
+**Provisioning**
 
-* `make provision`: Kjører full provisjonering. Bruk `TAGS=<navn>` eller `SKIP=<navn>` for å begrense omfanget.
-* `make reset`: Fjerner K3s, mesh-konfigurasjon og alle provisjoneringsspor fra alle noder. Ber om bekreftelse.
-* `make reboot`: Starter alle noder på nytt. Ber om bekreftelse.
+* `make provision`: Runs full provisioning. Use `TAGS=<name>` or `SKIP=<name>` to limit the scope.
+* `make reset`: Removes K3s, mesh configuration and all provisioning traces from all nodes. Asks for confirmation.
+* `make reboot`: Restarts all nodes. Asks for confirmation.
 
-**Automatisert provisjonering (venividivici)**
+**Automated provisioning (venividivici)**
 
-* `make venividivici-build`: Bygger og pusher venividivici sitt image til Zot.
-* `make venividivici-apply`: Distribuerer venividivici-poden på manager.
-* `make venividivici-logs`: Følger venividivici sin logg live.
-* `make venividivici-delete`: Fjerner venividivici-distribusjonen.
-* `make venividivici-rollout`: Starter venividivici-poden på nytt.
+* `make venividivici-build`: Builds and pushes venividivici's image to Zot.
+* `make venividivici-apply`: Deploys the venividivici pod on the manager.
+* `make venividivici-logs`: Follows venividivici's log live.
+* `make venividivici-delete`: Removes the venividivici deployment.
+* `make venividivici-rollout`: Restarts the venividivici pod.
 
-**Cluster-administrasjon**
+**Cluster administration**
 
-* `make kubeconfig`: Henter kubeconfig fra manager til `~/.kube/config`.
-* `make kubeconfig-copy HOST=<node>`: Kopierer kubeconfig til en annen Pi.
-* `make label`: Kjører kapabilitetsdeteksjon på nytt og oppdaterer k8s-labels. Fjerner ikke gamle labels.
+* `make kubeconfig`: Fetches kubeconfig from the manager to `~/.kube/config`.
+* `make kubeconfig-copy HOST=<node>`: Copies kubeconfig to another Pi.
+* `make label`: Re-runs capability detection and updates k8s labels. Does not remove old labels.
 
-**Distribusjon**
+**Deployment**
 
-* `make deploy ACTION=<apply|logs|delete|build|rollout>`: Velger en Kubernetes-distribusjon fra dette repoet eller et naboprepo, og kjører valgt handling. Uten `ACTION` velges handlingen interaktivt.
-* `make deploy-scheduler`: Bygger og distribuerer den egendefinerte scheduleren. Krever `SCHEDULER_DIR` satt til scheduler-repoet, standard `../scheduler`.
+* `make deploy ACTION=<apply|logs|delete|build|rollout>`: Picks a Kubernetes deployment from this repo or a sibling repo, and runs the selected action. Without `ACTION`, the action is chosen interactively.
+* `make deploy-scheduler`: Builds and deploys the custom scheduler. Requires `SCHEDULER_DIR` set to the scheduler repo, default `../scheduler`.
 
-**Register**
+**Registry**
 
-* `make registry-trust`: Setter opp denne maskinen til å pushe til Zot-registeret. Se `registry/README.md`.
+* `make registry-trust`: Sets up this machine to push to the Zot registry. See `registry/README.md`.
 
-**Observasjon**
+**Observation**
 
-* `make watch`: Velger og strømmer en live cluster-visning (scheduler-logg, poder, noder, tjenester).
+* `make watch`: Picks and streams a live cluster view (scheduler log, pods, nodes, services).
 
-**Feltlogging**
+**Field logging**
 
-* `make start-logging`: Synkroniserer klokken på alle noder, deretter starter feltlogging. Bruk `SESSION=<id>` for å gjenoppta en økt.
-* `make stop-logging`: Stopper feltlogging på alle noder.
-* `make collect-logs`: Henter logger fra alle noder til `collected-logs/synced/`.
+* `make start-logging`: Synchronizes the clock on all nodes, then starts field logging. Use `SESSION=<id>` to resume a session.
+* `make stop-logging`: Stops field logging on all nodes.
+* `make collect-logs`: Fetches logs from all nodes to `collected-logs/synced/`.
 
-**Vedlikehold**
+**Maintenance**
 
-* `make known-hosts-reset`: Fjerner gamle SSH-nøkler for alle noder. Kjør etter at en Pi er re-flashet, eller når SSH varsler om at en host key ikke stemmer (`WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED`).
+* `make known-hosts-reset`: Removes old SSH keys for all nodes. Run after a Pi has been reflashed, or when SSH warns that a host key does not match (`WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED`).
 
-**Felteksperiment uten ruter**
+**Field experiment without a router**
 
-* `make field-phase-one`: Setter managerens faste `eth0`-IP. Kjør før du flytter kabelen fra ruter til laptop.
-* `make field-phase-two`: Bekrefter manager etter kabelbyttet.
+* `make field-phase-one`: Sets the manager's fixed `eth0` IP. Run before moving the cable from router to laptop.
+* `make field-phase-two`: Confirms the manager after the cable swap.
 
-## 05 - Feilsøking
+## 05 - Troubleshooting
 
-* Symptom: `make provision` eller `make reset` feiler underveis.
-  * Løsning: Kjør kommandoen på nytt. Vanlige årsaker er en låst apt-fil, en treg K3s-installasjon eller en node som ikke er ferdig oppstartet. En ny kjøring løser som regel dette.
-* Symptom: En worker er ikke synlig i mesh-trafikken (mangler i `batctl n`, eller svarer ikke på ping over `bat0`).
-  * Løsning: Kjør `make reboot LIMIT=<node>`. Løser som regel problemet.
-* Symptom: En worker svarer normalt i mesh-trafikken, men mangler eller er `NotReady` i `kubectl get nodes`.
-  * Løsning: Koble til noden med SSH og kjør `systemctl restart k3s-agent`. Tjenesten kan ha startet på `eth0` før `bat0` var klar.
-* Symptom: En fjernet enhet (f.eks. GPS) har fortsatt sin kapabilitets-label på noden.
-  * Løsning: Fjern labelen manuelt med `kubectl label node <node> capability/<navn>-`. Kapabilitetsdeteksjon fjerner aldri gamle labels automatisk.
-* Symptom: Tidsstempler i feltlogger stemmer ikke med klokkeslettet.
-  * Løsning: Bruk `make start-logging`, ikke en manuell `systemctl start`. Den synkroniserer klokken mot laptopen først. Manager har ikke nødvendigvis internett i felt.
-* Symptom: `docker push` mot registeret feiler med en sertifikatfeil.
-  * Løsning: Kjør `make registry-trust` på maskinen som pusher.
-* Symptom: Et pushet image lar seg ikke hente ned på clusteret.
-  * Løsning: Kontroller at image-referansen matcher `REGISTRY_HOST:REGISTRY_PORT` nøyaktig, satt i din `.env` (standardverdi `manager0.gotham:30500`, se avsnitt 03). Avvik fra denne strengen feiler.
-* Symptom: `make deploy ACTION=build` gjør ingenting for et image.
-  * Løsning: Kjør byggekommandoen i det aktuelle repoet direkte. `deployctl.sh` har ingen generisk byggefunksjon.
-* Symptom: Clusteret mister all tilgang når manager går offline.
-  * Løsning: Ingen automatisk løsning finnes i dag. Clusteret har verken manager-failover eller valg av ny manager. Start manager på nytt, eller provisjoner en ny manager manuelt.
+* Symptom: `make provision` or `make reset` fails partway through.
+  * Fix: Run the command again. Common causes are a locked apt file, a slow K3s install, or a node that has not finished booting. A rerun usually fixes this.
+* Symptom: A worker is not visible in mesh traffic (missing from `batctl n`, or does not respond to ping over `bat0`).
+  * Fix: Run `make reboot LIMIT=<node>`. This usually resolves the issue.
+* Symptom: A worker responds normally in mesh traffic, but is missing or `NotReady` in `kubectl get nodes`.
+  * Fix: Connect to the node over SSH and run `systemctl restart k3s-agent`. The service may have started on `eth0` before `bat0` was ready.
+* Symptom: A removed device (e.g. GPS) still has its capability label on the node.
+  * Fix: Remove the label manually with `kubectl label node <node> capability/<name>-`. Capability detection never removes old labels automatically.
+* Symptom: Timestamps in field logs do not match the actual time.
+  * Fix: Use `make start-logging`, not a manual `systemctl start`. It synchronizes the clock against the laptop first. The manager does not necessarily have internet access in the field.
+* Symptom: `docker push` to the registry fails with a certificate error.
+  * Fix: Run `make registry-trust` on the machine doing the push.
+* Symptom: A pushed image cannot be pulled on the cluster.
+  * Fix: Check that the image reference matches `REGISTRY_HOST:REGISTRY_PORT` exactly, as set in your `.env` (default `manager0.gotham:30500`, see section 03). Any deviation from this string fails.
+* Symptom: `make deploy ACTION=build` does nothing for an image.
+  * Fix: Run the build command directly in the relevant repo. `deployctl.sh` has no generic build function.
+* Symptom: The cluster loses all access when the manager goes offline.
+  * Fix: No automatic fix exists today. The cluster has neither manager failover nor election of a new manager. Restart the manager, or provision a new manager manually.
